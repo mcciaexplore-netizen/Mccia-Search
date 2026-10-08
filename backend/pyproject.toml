@@ -1,0 +1,19 @@
+[project]
+name = "mccia-rag-backend"
+version = "0.1.0"
+description = "Backend for the MCCIA RAG chatbot"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+    "python-dotenv",
+    "google-genai>=1.0",
+    "google-api-python-client>=2.140",
+    "google-auth>=2.34",
+    "psycopg[binary]>=3.2",
+    "pgvector>=0.3",
+    "pydantic>=2.8",
+    "pymupdf>=1.24",
+    "pytest>=8.0",
+]

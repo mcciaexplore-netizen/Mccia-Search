@@ -1,0 +1,9 @@
+.env
+credentials.json
+staging/
+.venv/
+node_modules/
+.next/
+__pycache__/
+*.pyc
+.DS_Store
