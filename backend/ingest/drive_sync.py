@@ -1,11 +1,13 @@
-"""Google Drive sync: download new and changed files into the staging area."""
+"""Google Drive access: list the PDFs in a folder and stream them into memory.
 
-import json
-import sys
+PDF bytes are never written to disk.
+"""
+
+import io
 import time
-from collections import Counter
 from http.client import HTTPException
 from pathlib import Path
+from typing import Iterator
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import Resource, build
@@ -13,7 +15,7 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload
 from httplib2 import HttpLib2Error
 
-from config import GOOGLE_DRIVE_FOLDER_ID, GOOGLE_SERVICE_ACCOUNT_FILE, STAGING_DIR
+from config import GOOGLE_DRIVE_FOLDER_ID, GOOGLE_SERVICE_ACCOUNT_FILE
 
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 PDF_MIME = "application/pdf"
@@ -21,9 +23,9 @@ FOLDER_MIME = "application/vnd.google-apps.folder"
 
 PAGE_SIZE = 200
 CHUNK_SIZE = 4 * 1024 * 1024
-MAX_ATTEMPTS = 3
+MAX_RETRIES = 3
 RETRY_WAIT_SECONDS = 5
-IDS_FILENAME = ".drive_ids.json"
+BYTES_PER_MB = 1024 * 1024
 
 _NETWORK_ERRORS = (HttpError, OSError, HttpLib2Error, HTTPException)
 
@@ -122,109 +124,85 @@ def list_pdfs(service: Resource) -> list[dict]:
     return pdfs
 
 
-def download_pdf(
-    service: Resource, file_id: str, filename: str, size: int | None = None
-) -> Path:
-    """Download a Drive PDF to STAGING_DIR/<filename> and return its local path.
+def stream_pdf(
+    service: Resource,
+    file_id: str,
+    filename: str | None = None,
+    size: int | None = None,
+) -> bytes:
+    """Stream a Drive PDF into memory and return its bytes; nothing touches the disk.
 
-    The download is skipped when a file of the same size is already present.
-    Pass `size` (bytes, from list_pdfs) to avoid an extra metadata request.
-    Network errors are retried up to MAX_ATTEMPTS times; a RuntimeError is raised
-    if every attempt fails.
+    `filename` is only used in log messages. Pass `size` (bytes, from list_pdfs) to
+    reject a truncated download. Network errors, rate limits and 5xx are retried up
+    to MAX_RETRIES times, RETRY_WAIT_SECONDS apart, each retry starting from an empty
+    buffer. A RuntimeError is raised if every attempt fails; other API errors
+    (403, 404, ...) are raised straight away.
     """
-    staging_dir = Path(STAGING_DIR)
-    staging_dir.mkdir(parents=True, exist_ok=True)
-    filename = _safe_filename(filename)
-    dest = staging_dir / filename
-    part = staging_dir / f"{filename}.part"
-
-    if size is None and dest.exists():
-        size = int(
-            service.files()
-            .get(fileId=file_id, fields="size", supportsAllDrives=True)
-            .execute(num_retries=3)["size"]
-        )
-
-    if _is_present(dest, size):
-        _record_drive_id(filename, file_id)
-        return dest
+    label = filename or file_id
+    print(f"[drive] streaming {label} into memory...")
 
     last_error: Exception | None = None
-    for attempt in range(1, MAX_ATTEMPTS + 1):
+    for attempt in range(1, MAX_RETRIES + 2):
         try:
-            _fetch_to_file(service, file_id, filename, part)
-            if size is not None and part.stat().st_size != size:
-                raise OSError(
-                    f"size mismatch: got {part.stat().st_size} bytes, expected {size}"
-                )
-            part.replace(dest)
+            data = _fetch_to_memory(service, file_id)
+            if size is not None and len(data) != size:
+                raise OSError(f"size mismatch: got {len(data)} bytes, expected {size}")
+            return data
         except _NETWORK_ERRORS as exc:
             if not _is_retryable(exc):
                 raise
-            last_error = exc
-            if attempt < MAX_ATTEMPTS:
+            # Without its traceback the error no longer keeps the failed download's
+            # buffer alive while the next attempt fills a new one.
+            last_error = exc.with_traceback(None)
+            if attempt <= MAX_RETRIES:
                 print(
-                    f"[retry] {filename} — attempt {attempt}/{MAX_ATTEMPTS} failed "
+                    f"[retry] {label} — attempt {attempt}/{MAX_RETRIES + 1} failed "
                     f"({exc}); retrying in {RETRY_WAIT_SECONDS}s"
                 )
                 time.sleep(RETRY_WAIT_SECONDS)
-        else:
-            _record_drive_id(filename, file_id)
-            return dest
-        finally:
-            part.unlink(missing_ok=True)
 
     raise RuntimeError(
-        f"Giving up on {filename} after {MAX_ATTEMPTS} attempts: {last_error}"
+        f"Giving up on {label} after {MAX_RETRIES + 1} attempts: {last_error}"
     ) from last_error
 
 
-def sync_drive() -> list[Path]:
-    """Download every Drive PDF not already in staging; return the new paths.
+def iter_drive_pdfs(service: Resource) -> Iterator[dict]:
+    """Yield every Drive PDF as {file_id, filename, size, bytes}, streamed one at a time.
 
-    A file that fails all its retries is reported and skipped so the rest of the
-    sync can finish.
+    A PDF is only downloaded when the caller asks for the next item, so just one is
+    held in memory. The caller should drop its reference to an item before asking for
+    the next, so the bytes can be freed. A file that cannot be streamed is reported
+    and skipped so the rest can continue.
     """
-    service = build_drive_service()
     pdfs = list_pdfs(service)
-    local_names = _local_filenames(pdfs)
+    total = len(pdfs)
 
-    downloaded: list[Path] = []
-    skipped = 0
-    failed: list[str] = []
-
-    for pdf, local_name in zip(pdfs, local_names):
-        was_present = _is_present(Path(STAGING_DIR) / local_name, pdf["size"])
+    for index, pdf in enumerate(pdfs, start=1):
+        filename, size = pdf["name"], pdf["size"]
+        print(f"[drive] {index}/{total} — {filename} ({(size or 0) / BYTES_PER_MB:.1f} MB)")
         try:
-            path = download_pdf(service, pdf["file_id"], local_name, size=pdf["size"])
-        except Exception as exc:  # one bad file must not stop the sync
-            print(f"[failed] {local_name} — {exc}", file=sys.stderr)
-            failed.append(local_name)
+            data = stream_pdf(service, pdf["file_id"], filename, size)
+        except Exception as exc:  # one bad file must not stop the run
+            print(f"[drive] WARNING: failed to stream {filename}, skipping — {exc}")
             continue
-        if was_present:
-            skipped += 1
-        else:
-            downloaded.append(path)
-
-    print(
-        f"Sync complete: {len(downloaded)} downloaded, "
-        f"{skipped} skipped (already present)"
-    )
-    if failed:
-        print(f"{len(failed)} file(s) failed: {', '.join(failed)}", file=sys.stderr)
-    return downloaded
+        yield {
+            "file_id": pdf["file_id"],
+            "filename": filename,
+            "size": size if size is not None else len(data),
+            "bytes": data,
+        }
+        del data  # the caller now holds the only reference
 
 
-def _fetch_to_file(service: Resource, file_id: str, filename: str, part: Path) -> None:
-    """Stream a Drive file into `part`, printing progress per chunk."""
+def _fetch_to_memory(service: Resource, file_id: str) -> bytes:
+    """Download a Drive file chunk by chunk into a BytesIO buffer."""
     request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
-    with part.open("wb") as handle:
-        downloader = MediaIoBaseDownload(handle, request, chunksize=CHUNK_SIZE)
-        done = False
-        while not done:
-            status, done = downloader.next_chunk()
-            if status:
-                print(f"[downloading] {filename} — {int(status.progress() * 100)}%")
+    buffer = io.BytesIO()
+    downloader = MediaIoBaseDownload(buffer, request, chunksize=CHUNK_SIZE)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+    return buffer.getvalue()
 
 
 def _is_retryable(exc: Exception) -> bool:
@@ -233,63 +211,3 @@ def _is_retryable(exc: Exception) -> bool:
         status = exc.resp.status
         return status in (408, 429) or status >= 500
     return True
-
-
-def _is_present(path: Path, size: int | None) -> bool:
-    return size is not None and path.is_file() and path.stat().st_size == size
-
-
-def _safe_filename(name: str) -> str:
-    """Make a Drive file name safe to use as a single local path component."""
-    name = name.replace("/", "_").replace("\\", "_").replace("\x00", "_").strip()
-    if not name:
-        name = "untitled"
-    if not name.lower().endswith(".pdf"):
-        name += ".pdf"
-    return name
-
-
-def _local_filenames(pdfs: list[dict]) -> list[str]:
-    """Pick a local filename for each PDF, in the same order as `pdfs`.
-
-    PDFs from different Drive folders can share a name (and macOS file systems
-    ignore case). Every file in such a group gets its Drive ID appended, so no
-    file overwrites another and the names don't depend on listing order.
-    """
-    names = [_safe_filename(pdf["name"]) for pdf in pdfs]
-    counts = Counter(name.casefold() for name in names)
-    return [
-        f"{name[:-4]}__{pdf['file_id']}.pdf" if counts[name.casefold()] > 1 else name
-        for name, pdf in zip(names, pdfs)
-    ]
-
-
-def _load_drive_ids(path: Path) -> dict[str, str]:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return {}
-    except (OSError, ValueError) as exc:
-        print(f"[warn] could not read {path} ({exc}); starting a new map", file=sys.stderr)
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _record_drive_id(filename: str, file_id: str) -> None:
-    """Record filename -> Drive file ID in the sidecar, written atomically."""
-    path = Path(STAGING_DIR) / IDS_FILENAME
-    ids = _load_drive_ids(path)
-    if ids.get(filename) == file_id:
-        return
-    ids[filename] = file_id
-    tmp = path.with_name(f"{path.name}.tmp")
-    tmp.write_text(
-        json.dumps(ids, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    tmp.replace(path)
-
-
-if __name__ == "__main__":
-    paths = sync_drive()
-    print(f"Downloaded {len(paths)} new PDFs")

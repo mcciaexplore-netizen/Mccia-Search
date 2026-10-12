@@ -31,7 +31,7 @@ GOOGLE_DRIVE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_FOLDER_ID")
 GOOGLE_SERVICE_ACCOUNT_FILE = _project_path(
     os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE") or "./credentials.json"
 )
-STAGING_DIR = _project_path(os.environ.get("STAGING_DIR") or "./staging/raw")
+OCR_CACHE_DIR = _project_path(os.environ.get("OCR_CACHE_DIR") or "./staging/ocr_cache")
 
 
 def validate_config() -> None:

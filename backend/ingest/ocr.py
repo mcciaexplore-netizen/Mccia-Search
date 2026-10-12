@@ -1,4 +1,4 @@
-"""OCR of staged documents using Gemini."""
+"""OCR of PDF documents using Gemini."""
 
 import json
 import re
@@ -12,7 +12,7 @@ from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
 
-from config import GEMINI_API_KEY, STAGING_DIR
+from config import GEMINI_API_KEY, OCR_CACHE_DIR
 
 # gemini-2.0-flash was shut down on 2026-06-01; gemini-3.6-flash is Google's
 # documented replacement. Change this one constant to switch models.
@@ -30,7 +30,6 @@ SYSTEM_PROMPT = (
 RENDER_DPI = 200
 RETRY_DELAYS = (2, 4, 8)  # seconds before retry 1, 2 and 3
 REQUEST_TIMEOUT_MS = 120_000
-CACHE_DIRNAME = ".ocr_cache"
 
 DEVANAGARI_START, DEVANAGARI_END = "ऀ", "ॿ"
 LANGUAGE_SAMPLE_CHARS = 500
@@ -44,15 +43,19 @@ class OCRPageError(RuntimeError):
     """Gemini could not produce text for a single page."""
 
 
-def pdf_to_images(pdf_path: Path) -> list[bytes]:
-    """Render every page of a PDF to PNG bytes at RENDER_DPI."""
-    name = pdf_path.name
-    if not pdf_path.is_file():
-        raise FileNotFoundError(f"PDF not found: {name} ({pdf_path})")
+def pdf_to_images(pdf_data: bytes | Path) -> list[bytes]:
+    """Render every page of a PDF (raw bytes or a file path) to PNG bytes at RENDER_DPI."""
+    from_path = isinstance(pdf_data, Path)
+    name = pdf_data.name if from_path else "<in-memory PDF>"
+    if from_path and not pdf_data.is_file():
+        raise FileNotFoundError(f"PDF not found: {name} ({pdf_data})")
 
     doc = None
     try:
-        doc = pymupdf.open(pdf_path)
+        if from_path:
+            doc = pymupdf.open(pdf_data)
+        else:
+            doc = pymupdf.open(stream=pdf_data, filetype="pdf")
         total_pages = doc.page_count
     except Exception as exc:
         if doc is not None:
@@ -125,15 +128,15 @@ def ocr_page(image_bytes: bytes, page_num: int) -> str:
     return text.strip()
 
 
-def ocr_pdf(pdf_path: Path, drive_file_id: str | None = None) -> list[dict]:
+def ocr_pdf(pdf_data: bytes | Path, drive_file_id: str | None = None) -> list[dict]:
     """OCR every page of a PDF, one page at a time.
 
     Returns [{page_number, text}, ...] with 1-based page numbers. A page that
     fails gets empty text and the rest still run. When `drive_file_id` is given
     and every page succeeded, the result is saved to the OCR cache.
     """
-    name = pdf_path.name
-    images = pdf_to_images(pdf_path)
+    name = _source_name(pdf_data, drive_file_id)
+    images = pdf_to_images(pdf_data)
     total = len(images)
 
     results: list[dict] = []
@@ -165,13 +168,13 @@ def ocr_pdf(pdf_path: Path, drive_file_id: str | None = None) -> list[dict]:
     return results
 
 
-def get_or_ocr(pdf_path: Path, drive_file_id: str) -> list[dict]:
+def get_or_ocr(pdf_data: bytes | Path, drive_file_id: str) -> list[dict]:
     """Return the OCR result for a PDF, using the cache when it has one."""
     cached = _load_cache(_cache_path(drive_file_id))
     if cached is not None:
-        print(f"[ocr] cache hit for {pdf_path.name}, skipping OCR")
+        print(f"[ocr] cache hit for {_source_name(pdf_data, drive_file_id)}, skipping OCR")
         return cached
-    return ocr_pdf(pdf_path, drive_file_id)
+    return ocr_pdf(pdf_data, drive_file_id)
 
 
 def detect_language(text: str) -> str:
@@ -215,6 +218,13 @@ def _brief(exc: Exception) -> str:
     return str(exc).replace("\n", " ")[:200]
 
 
+def _source_name(pdf_data: bytes | Path, drive_file_id: str | None) -> str:
+    """A name for log lines: the file name for a path, the Drive ID for raw bytes."""
+    if isinstance(pdf_data, Path):
+        return pdf_data.name
+    return drive_file_id or "<in-memory PDF>"
+
+
 def _empty_response_reason(response: types.GenerateContentResponse) -> str | None:
     """Why a response has no text, or None if it is just a blank page."""
     feedback = response.prompt_feedback
@@ -231,7 +241,7 @@ def _empty_response_reason(response: types.GenerateContentResponse) -> str | Non
 def _cache_path(drive_file_id: str) -> Path:
     if not _DRIVE_ID_PATTERN.fullmatch(drive_file_id):
         raise ValueError(f"Invalid Drive file ID: {drive_file_id!r}")
-    return Path(STAGING_DIR) / CACHE_DIRNAME / f"{drive_file_id}.json"
+    return Path(OCR_CACHE_DIR) / f"{drive_file_id}.json"
 
 
 def _load_cache(path: Path) -> list[dict] | None:
