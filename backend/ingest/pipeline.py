@@ -1,7 +1,12 @@
 """Orchestrates the full ingest pipeline from Drive sync to embedding."""
 
 from db.connection import get_connection
-from ingest.drive_sync import build_drive_service, iter_drive_pdfs
+from ingest.drive_sync import (
+    build_drive_service,
+    get_completed_drive_ids,
+    iter_drive_pdfs,
+    list_pdfs,
+)
 from ingest.ocr import get_or_ocr, detect_language
 from ingest.chunker import split_into_chunks
 from ingest.embedder import embed_and_store, update_document_status
@@ -75,6 +80,12 @@ def run_pipeline() -> dict:
 
     ingested = skipped = failed = 0
 
+    # iter_drive_pdfs(skip_completed=True) never streams a completed PDF, and never
+    # yields it either, so those skips are counted here. Streaming everything and
+    # skipping afterwards would download each completed PDF just to discard it.
+    completed_ids = get_completed_drive_ids()
+    skipped += sum(1 for pdf in list_pdfs(service) if pdf["file_id"] in completed_ids)
+
     # PDFs stream from Drive one at a time. A document that failed earlier is
     # retried when its PDF comes up: _insert_document resets it to 'processing'.
     for item in iter_drive_pdfs(service, skip_completed=True):
@@ -89,6 +100,6 @@ def run_pipeline() -> dict:
 
     print(
         f"[pipeline] complete: {ingested} ingested, "
-        f"{skipped} skipped, {failed} failed"
+        f"{skipped} skipped (already done), {failed} failed"
     )
     return {"ingested": ingested, "skipped": skipped, "failed": failed}
