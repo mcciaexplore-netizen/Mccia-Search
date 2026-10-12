@@ -16,6 +16,7 @@ from googleapiclient.http import MediaIoBaseDownload
 from httplib2 import HttpLib2Error
 
 from config import GOOGLE_DRIVE_FOLDER_ID, GOOGLE_SERVICE_ACCOUNT_FILE
+from db.connection import get_connection
 
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 PDF_MIME = "application/pdf"
@@ -166,19 +167,46 @@ def stream_pdf(
     ) from last_error
 
 
-def iter_drive_pdfs(service: Resource) -> Iterator[dict]:
+def get_completed_drive_ids() -> set[str]:
+    """Drive file IDs of every document already fully ingested.
+
+    Returns an empty set if the database cannot be reached, so the caller streams
+    every file instead of failing.
+    """
+    try:
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT drive_file_id FROM documents WHERE status = 'completed'"
+            ).fetchall()
+    except Exception as exc:
+        # Only the error type is printed: a malformed DATABASE_URL can end up in the message.
+        print(
+            "[drive] WARNING: could not load completed IDs from DB, "
+            f"will stream all files ({type(exc).__name__})"
+        )
+        return set()
+    return {row[0] for row in rows}
+
+
+def iter_drive_pdfs(service: Resource, skip_completed: bool = True) -> Iterator[dict]:
     """Yield every Drive PDF as {file_id, filename, size, bytes}, streamed one at a time.
 
-    A PDF is only downloaded when the caller asks for the next item, so just one is
-    held in memory. The caller should drop its reference to an item before asking for
-    the next, so the bytes can be freed. A file that cannot be streamed is reported
-    and skipped so the rest can continue.
+    With `skip_completed` (the default), PDFs whose document is already 'completed'
+    in the database are skipped before they are streamed; pass False to stream
+    everything. A PDF is only downloaded when the caller asks for the next item, so
+    just one is held in memory. The caller should drop its reference to an item
+    before asking for the next, so the bytes can be freed. A file that cannot be
+    streamed is reported and skipped so the rest can continue.
     """
     pdfs = list_pdfs(service)
     total = len(pdfs)
+    completed_ids = get_completed_drive_ids() if skip_completed else set()
 
     for index, pdf in enumerate(pdfs, start=1):
         filename, size = pdf["name"], pdf["size"]
+        if pdf["file_id"] in completed_ids:
+            print(f"[drive] {index}/{total} — {filename} already ingested, skipping")
+            continue
         print(f"[drive] {index}/{total} — {filename} ({(size or 0) / BYTES_PER_MB:.1f} MB)")
         try:
             data = stream_pdf(service, pdf["file_id"], filename, size)

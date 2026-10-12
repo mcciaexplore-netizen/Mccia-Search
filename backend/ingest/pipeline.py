@@ -77,7 +77,7 @@ def run_pipeline() -> dict:
 
     # PDFs stream from Drive one at a time. A document that failed earlier is
     # retried when its PDF comes up: _insert_document resets it to 'processing'.
-    for item in iter_drive_pdfs(service):
+    for item in iter_drive_pdfs(service, skip_completed=True):
         result = ingest_one(item["bytes"], item["file_id"], item["filename"])
         del item  # frees the PDF bytes before the next one streams in
         if result == "ingested":
