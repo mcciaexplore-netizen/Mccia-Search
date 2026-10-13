@@ -9,29 +9,42 @@ from google.genai import errors as genai_errors
 from google.genai import types
 
 from config import GEMINI_API_KEY, GEMINI_CHAT_MODEL
-from retrieval.search import search
+from retrieval.search import TOP_K, search
 
 GENERATION_MODEL = GEMINI_CHAT_MODEL
-MAX_CONTEXT_CHUNKS = 5
+MAX_CONTEXT_CHUNKS = TOP_K
 MAX_OUTPUT_TOKENS = 2048
 
 RETRY_DELAYS = (2, 4, 8)  # seconds before retry 1, 2 and 3
 REQUEST_TIMEOUT_MS = 120_000
 
 SYSTEM_PROMPT = (
-    "You are a helpful assistant for MCCIA (Mahratta Chamber of Commerce, "
-    "Industries and Agriculture), Pune. "
-    "Answer the question using ONLY the provided context. "
-    "Detect the language of the question and respond in that same language — "
-    "Marathi, Hindi, or English. "
-    "Always cite your sources by mentioning the document name and page number "
-    "at the end of your answer. "
-    "If the context does not contain enough information to answer, say so honestly."
+    "You are an expert research assistant for MCCIA "
+    "(Mahratta Chamber of Commerce, Industries and Agriculture), Pune. "
+    "You have access to Sampada — MCCIA's monthly journal published "
+    "from 1945 to 2017, written in Marathi, Hindi and English. "
+    "The magazine was originally called "
+    "'मराठा चेंबर ऑफ कॉमर्स ॲण्ड इंडस्ट्रीजचें मासिक वृत्त' "
+    "and later renamed Sampada.\n\n"
+    "Rules:\n"
+    "1. Answer ONLY using the provided context. No outside knowledge.\n"
+    "2. Respond in the SAME language the user used to ask.\n"
+    "3. Even if the context is in Marathi and the question is in English "
+    "— translate and answer in English.\n"
+    "4. Always cite: issue year/month and page number.\n"
+    "5. If context is insufficient, say so honestly. Never guess.\n"
+    "6. For questions about the magazine name, MCCIA history, Pune industries "
+    "or Maharashtra economy — look carefully at ALL context before "
+    "saying not found.\n"
+    "7. When the question is about what something is called or named — "
+    "look for the exact Marathi or English name in the context."
 )
 
 NOT_FOUND_ANSWER = (
-    "मला या प्रश्नाचे उत्तर सापडले नाही. "
-    "I could not find an answer to your question in the available documents."
+    "माफ करा, संपदा मासिकाच्या उपलब्ध अंकांमध्ये या प्रश्नाचे उत्तर सापडले नाही. | "
+    "Sorry, I could not find the answer in the available issues of "
+    "Sampada magazine (1945–2017). "
+    "Try asking in Marathi for better results on historical content."
 )
 
 _API_ERRORS = (genai_errors.APIError, httpx.HTTPError, OSError)
@@ -68,9 +81,9 @@ def generate_answer(query: str, chunks: list[dict]) -> dict:
     return {"answer": answer, "sources": _build_sources(used), "found": True}
 
 
-def rag(query: str, top_k: int = 5) -> dict:
-    """Search for the top_k most relevant chunks, then answer the query from them."""
-    return generate_answer(query, search(query, top_k))
+def rag(query: str, top_k: int | None = None) -> dict:
+    """Search for the top_k most relevant chunks (default: search.TOP_K), then answer from them."""
+    return generate_answer(query, search(query, TOP_K if top_k is None else top_k))
 
 
 def _generate(prompt: str) -> str:

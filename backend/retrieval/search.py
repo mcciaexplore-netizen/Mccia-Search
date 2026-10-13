@@ -15,8 +15,8 @@ from psycopg_pool import PoolTimeout
 from config import GEMINI_API_KEY, GEMINI_EMBEDDING_MODEL
 from db.connection import get_pooled_connection
 
-TOP_K = 5  # number of chunks to return
-MIN_SIMILARITY = 0.4  # discard chunks below this score
+TOP_K = 8  # number of chunks to return
+MIN_SIMILARITY = 0.25  # discard chunks below this score
 EMBEDDING_MODEL = GEMINI_EMBEDDING_MODEL  # the same setting ingest/embedder.py uses
 EMBEDDING_DIMENSION = 768
 TASK_TYPE = "RETRIEVAL_QUERY"  # documents are embedded as RETRIEVAL_DOCUMENT

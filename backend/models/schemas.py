@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 class ChatRequest(BaseModel):
     query: str
-    top_k: int = 5
+    top_k: int | None = None  # None: the server's default (search.TOP_K)
 
 
 class SourceItem(BaseModel):
