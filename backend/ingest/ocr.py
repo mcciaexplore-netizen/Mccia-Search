@@ -16,11 +16,11 @@ from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
 
-from config import GEMINI_API_KEY, OCR_CACHE_DIR
+from config import GEMINI_API_KEY, GEMINI_OCR_MODEL, OCR_CACHE_DIR
 
-# gemini-2.0-flash was shut down on 2026-06-01; gemini-3.6-flash is Google's
-# documented replacement. Change this one constant to switch models.
-OCR_MODEL = "gemini-3.6-flash"
+# Set GEMINI_OCR_MODEL in .env to switch models (gemini-2.0-flash was shut down
+# on 2026-06-01).
+OCR_MODEL = GEMINI_OCR_MODEL
 
 SYSTEM_PROMPT = (
     "You are an OCR engine. Extract ALL text from this scanned document page "
@@ -181,7 +181,7 @@ def ocr_pdf(pdf_data: bytes | Path, drive_file_id: str | None = None) -> list[di
         else:
             if drive_file_id is not None:
                 try:
-                    _save_page(drive_file_id, page_number, text)
+                    _save_page_cache(drive_file_id, page_number, text)
                 except OSError as exc:  # caching is an optimisation: keep the text
                     with lock:
                         print(f"[ocr] WARNING: could not cache page {page_number}: {exc}")
@@ -193,7 +193,10 @@ def ocr_pdf(pdf_data: bytes | Path, drive_file_id: str | None = None) -> list[di
                 print(f"[ocr] page {page_number}/{total} failed, storing empty text — {error}")
             completed += 1
             if completed % PROGRESS_EVERY == 0 or completed == total:
-                print(f"[ocr] {completed}/{total} pages done — {name}")
+                print(
+                    f"[ocr] {completed}/{total} — {name} "
+                    f"({len(done)} from cache, {completed - len(done)} new)"
+                )
 
     if missing:
         _get_client()  # build the shared client once, before the workers start
@@ -385,7 +388,7 @@ def _start_cache(drive_file_id: str, total: int) -> dict[int, str]:
     }
 
 
-def _save_page(drive_file_id: str, page_number: int, text: str) -> None:
+def _save_page_cache(drive_file_id: str, page_number: int, text: str) -> None:
     """Write one page's OCR text to its cache file."""
     cache_dir = _cache_path(drive_file_id)
     _write_json(

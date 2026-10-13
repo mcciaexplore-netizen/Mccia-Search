@@ -8,16 +8,12 @@ from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
 
-from config import GEMINI_API_KEY
+from config import GEMINI_API_KEY, GEMINI_CHAT_MODEL
 from retrieval.search import search
 
-GENERATION_MODEL = "gemini-2.5-flash"
+GENERATION_MODEL = GEMINI_CHAT_MODEL
 MAX_CONTEXT_CHUNKS = 5
-MAX_OUTPUT_TOKENS = 1024
-# Thinking tokens count towards MAX_OUTPUT_TOKENS, and 2.5 Flash thinks by default,
-# which can leave little or no room for the answer. 0 turns thinking off; this
-# setting is specific to 2.5 Flash (newer models use thinking_level instead).
-THINKING_BUDGET = 0
+MAX_OUTPUT_TOKENS = 2048
 
 RETRY_DELAYS = (2, 4, 8)  # seconds before retry 1, 2 and 3
 REQUEST_TIMEOUT_MS = 120_000
@@ -82,7 +78,6 @@ def _generate(prompt: str) -> str:
     config = types.GenerateContentConfig(
         system_instruction=SYSTEM_PROMPT,
         max_output_tokens=MAX_OUTPUT_TOKENS,
-        thinking_config=types.ThinkingConfig(thinking_budget=THINKING_BUDGET),
     )
 
     for attempt, delay in enumerate((*RETRY_DELAYS, None), start=1):

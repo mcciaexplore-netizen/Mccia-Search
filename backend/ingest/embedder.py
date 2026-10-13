@@ -10,13 +10,14 @@ from google.genai import errors as genai_errors
 from google.genai import types
 from pgvector import Vector
 
-from config import GEMINI_API_KEY
+from config import GEMINI_API_KEY, GEMINI_EMBEDDING_MODEL
 from db.connection import get_connection
 
 # text-embedding-004 was shut down on 2026-01-14. gemini-embedding-001 is its
 # API-compatible successor and keeps task_type; Google's newer gemini-embedding-2
-# has no task_type and needs different prompts. Change this constant to switch.
-EMBEDDING_MODEL = "gemini-embedding-001"
+# has no task_type and needs different prompts. Set GEMINI_EMBEDDING_MODEL in .env
+# to switch; stored chunks must then be re-embedded with the same model.
+EMBEDDING_MODEL = GEMINI_EMBEDDING_MODEL
 EMBEDDING_DIMENSION = 768
 BATCH_SIZE = 20  # chunks to embed per API call
 TASK_TYPE = "RETRIEVAL_DOCUMENT"

@@ -24,6 +24,10 @@ def _project_path(value: str) -> Path:
 
 # Required: validate_config() raises ValueError if any of these is missing or blank.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+# Optional model names; a blank or missing value falls back to the default.
+GEMINI_OCR_MODEL = os.environ.get("GEMINI_OCR_MODEL") or "gemini-3.8-flash"
+GEMINI_CHAT_MODEL = os.environ.get("GEMINI_CHAT_MODEL") or "gemini-3.5-flash-lite"
+GEMINI_EMBEDDING_MODEL = os.environ.get("GEMINI_EMBEDDING_MODEL") or "gemini-embedding-001"
 DATABASE_URL = os.environ.get("DATABASE_URL")
 GOOGLE_DRIVE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_FOLDER_ID")
 
