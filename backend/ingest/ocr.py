@@ -181,7 +181,7 @@ def ocr_pdf(pdf_data: bytes | Path, drive_file_id: str | None = None) -> list[di
         else:
             if drive_file_id is not None:
                 try:
-                    _save_page_cache(drive_file_id, page_number, text)
+                    _save_page(drive_file_id, page_number, text)
                 except OSError as exc:  # caching is an optimisation: keep the text
                     with lock:
                         print(f"[ocr] WARNING: could not cache page {page_number}: {exc}")
@@ -307,8 +307,13 @@ def _cache_path(drive_file_id: str) -> Path:
     return Path(OCR_CACHE_DIR) / drive_file_id
 
 
-def _page_file(cache_dir: Path, page_number: int) -> Path:
-    return cache_dir / f"page_{page_number:04d}.json"
+def _page_name(page_number: int) -> str:
+    return f"page_{page_number:04d}.json"
+
+
+def _page_cache_path(drive_file_id: str, page_number: int) -> Path:
+    """The cache file for one page of a PDF."""
+    return _cache_path(drive_file_id) / _page_name(page_number)
 
 
 def _read_page(path: Path) -> dict | None:
@@ -323,7 +328,7 @@ def _read_page(path: Path) -> dict | None:
         and isinstance(data.get("page_number"), int)
         and data["page_number"] >= 1
         and isinstance(data.get("text"), str)
-        and path.name == _page_file(path.parent, data["page_number"]).name
+        and path.name == _page_name(data["page_number"])
     )
     if not valid:
         print(f"[ocr] ignoring malformed cache {path.name}")
@@ -331,22 +336,35 @@ def _read_page(path: Path) -> dict | None:
     return {"page_number": data["page_number"], "text": data["text"]}
 
 
-def _load_cache(drive_file_id: str) -> list[dict] | None:
-    """The pages cached so far, sorted by page number, or None if there are none.
-
-    The result may be partial: it is whatever an earlier, possibly interrupted, run
-    managed to save.
-    """
+def _read_pages(drive_file_id: str) -> list[dict]:
+    """Every readable page file in a PDF's cache folder, sorted by page number."""
     cache_dir = _cache_path(drive_file_id)
     if not cache_dir.is_dir():
-        return None
+        return []
     pages = [
         page
         for path in cache_dir.glob("page_*.json")
         if (page := _read_page(path)) is not None
     ]
     pages.sort(key=lambda page: page["page_number"])
-    return pages or None
+    return pages
+
+
+def _load_cache(drive_file_id: str) -> list[dict] | None:
+    """The pages cached so far, sorted by page number, or None if there is no cache.
+
+    A cache needs its meta.json (the PDF's page count); without one nothing is known
+    about it. Fewer pages than that count means a partial cache, whatever an earlier,
+    possibly interrupted, run managed to save: ocr_pdf fills in the gaps.
+    """
+    total = _load_total(drive_file_id)
+    if total is None:
+        return None
+    pages = [page for page in _read_pages(drive_file_id) if page["page_number"] <= total]
+    if not pages:
+        return None
+    print(f"[ocr] cache: {len(pages)}/{total} pages found for {drive_file_id}")
+    return pages
 
 
 def _load_total(drive_file_id: str) -> int | None:
@@ -369,32 +387,35 @@ def _start_cache(drive_file_id: str, total: int) -> dict[int, str]:
     A cache made for a PDF with a different page count belongs to another version of
     the file, so it is discarded.
     """
-    cache_dir = _cache_path(drive_file_id)
     saved_total = _load_total(drive_file_id)
     if saved_total is not None and saved_total != total:
         print(
             f"[ocr] cache was made for a {saved_total}-page PDF but this one has "
             f"{total}; discarding it"
         )
-        shutil.rmtree(cache_dir, ignore_errors=True)
+        shutil.rmtree(_cache_path(drive_file_id), ignore_errors=True)
     try:
-        _write_json(cache_dir / "meta.json", {"total_pages": total})
+        _save_meta(drive_file_id, total)
     except OSError as exc:
         print(f"[ocr] WARNING: could not write the cache: {exc}")
     return {
         page["page_number"]: page["text"]
-        for page in _load_cache(drive_file_id) or []
+        for page in _read_pages(drive_file_id)
         if page["page_number"] <= total
     }
 
 
-def _save_page_cache(drive_file_id: str, page_number: int, text: str) -> None:
+def _save_page(drive_file_id: str, page_number: int, text: str) -> None:
     """Write one page's OCR text to its cache file."""
-    cache_dir = _cache_path(drive_file_id)
     _write_json(
-        _page_file(cache_dir, page_number),
+        _page_cache_path(drive_file_id, page_number),
         {"page_number": page_number, "text": text},
     )
+
+
+def _save_meta(drive_file_id: str, total_pages: int) -> None:
+    """Write the PDF's page count to its meta.json."""
+    _write_json(_cache_path(drive_file_id) / "meta.json", {"total_pages": total_pages})
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -405,9 +426,55 @@ def _write_json(path: Path, data: dict) -> None:
     tmp.replace(path)
 
 
+def migrate_old_cache() -> None:
+    """One-time conversion of old single-file caches to the per-page layout.
+
+    An old cache is OCR_CACHE_DIR/<drive_file_id>.json holding every page. It becomes
+    a folder <drive_file_id>/ with one page_NNNN.json per page plus meta.json, and
+    the old file is deleted once the new files read back identical. A file that is
+    not a complete list of pages is left alone. Run by hand: python -m ingest.ocr
+    """
+    root = Path(OCR_CACHE_DIR)
+    if not root.is_dir():
+        return
+    for old in sorted(root.glob("*.json")):  # files directly in the folder only
+        if not old.is_file():
+            continue
+        drive_file_id = old.stem
+        try:
+            data = json.loads(old.read_text(encoding="utf-8"))
+            complete = (
+                isinstance(data, list)
+                and len(data) > 0
+                and all(
+                    isinstance(page, dict)
+                    and isinstance(page.get("page_number"), int)
+                    and isinstance(page.get("text"), str)
+                    for page in data
+                )
+                and [page["page_number"] for page in data] == list(range(1, len(data) + 1))
+            )
+            if not complete:
+                raise ValueError("not a complete list of pages")
+            pages = [{"page_number": p["page_number"], "text": p["text"]} for p in data]
+            _save_meta(drive_file_id, len(pages))
+            for page in pages:
+                _save_page(drive_file_id, page["page_number"], page["text"])
+            if _read_pages(drive_file_id) != pages:
+                raise OSError("the new files do not read back the same")
+        except (OSError, ValueError) as exc:
+            print(f"[ocr] could not migrate cache {old.name}: {exc}")
+            continue
+        old.unlink()
+        print(f"[ocr] migrated cache: {drive_file_id}")
+
+
 if __name__ == "__main__":
     import sys
 
-    result = get_or_ocr(Path(sys.argv[1]), sys.argv[2])
-    print(f"Extracted {len(result)} pages")
-    print(result[0]["text"][:500])
+    if len(sys.argv) == 1:
+        migrate_old_cache()  # run once by hand: python -m ingest.ocr
+    else:
+        result = get_or_ocr(Path(sys.argv[1]), sys.argv[2])
+        print(f"Extracted {len(result)} pages")
+        print(result[0]["text"][:500])
