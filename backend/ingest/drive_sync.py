@@ -3,7 +3,6 @@
 PDF bytes are never written to disk.
 """
 
-import io
 import time
 from http.client import HTTPException
 from pathlib import Path
@@ -12,7 +11,6 @@ from typing import Iterator
 from google.oauth2 import service_account
 from googleapiclient.discovery import Resource, build
 from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaIoBaseDownload
 from httplib2 import HttpLib2Error
 
 from config import GOOGLE_DRIVE_FOLDER_ID, GOOGLE_SERVICE_ACCOUNT_FILE
@@ -23,7 +21,8 @@ PDF_MIME = "application/pdf"
 FOLDER_MIME = "application/vnd.google-apps.folder"
 
 PAGE_SIZE = 200
-CHUNK_SIZE = 4 * 1024 * 1024
+CHUNK_SIZE = 8 * 1024 * 1024  # bytes per ranged request; a failed chunk is retried alone
+PROGRESS_EVERY_BYTES = 50 * 1024 * 1024
 MAX_RETRIES = 3
 RETRY_WAIT_SECONDS = 5
 BYTES_PER_MB = 1024 * 1024
@@ -133,32 +132,36 @@ def stream_pdf(
 ) -> bytes:
     """Stream a Drive PDF into memory and return its bytes; nothing touches the disk.
 
+    The file is fetched in CHUNK_SIZE ranged requests (see _fetch_to_memory), each
+    retried on its own, so a dropped connection costs one chunk and not the file.
     `filename` is only used in log messages. Pass `size` (bytes, from list_pdfs) to
-    reject a truncated download. Network errors, rate limits and 5xx are retried up
-    to MAX_RETRIES times, RETRY_WAIT_SECONDS apart, each retry starting from an empty
-    buffer. A RuntimeError is raised if every attempt fails; other API errors
+    know when the file is complete and to reject a wrong-sized result. If a chunk
+    still fails after its retries, the download is retried up to MAX_RETRIES more
+    times, RETRY_WAIT_SECONDS apart, each time resuming after the bytes already
+    received. A RuntimeError is raised if every attempt fails; other API errors
     (403, 404, ...) are raised straight away.
     """
     label = filename or file_id
     print(f"[drive] streaming {label} into memory...")
 
+    buf = bytearray()  # kept across attempts, so a retry resumes where the last one stopped
     last_error: Exception | None = None
     for attempt in range(1, MAX_RETRIES + 2):
         try:
-            data = _fetch_to_memory(service, file_id)
+            data = _fetch_to_memory(service, file_id, label, size or 0, buf)
             if size is not None and len(data) != size:
+                buf.clear()  # not the file we expected: a retry has to start over
                 raise OSError(f"size mismatch: got {len(data)} bytes, expected {size}")
             return data
         except _NETWORK_ERRORS as exc:
             if not _is_retryable(exc):
                 raise
-            # Without its traceback the error no longer keeps the failed download's
-            # buffer alive while the next attempt fills a new one.
             last_error = exc.with_traceback(None)
             if attempt <= MAX_RETRIES:
                 print(
                     f"[retry] {label} — attempt {attempt}/{MAX_RETRIES + 1} failed "
-                    f"({exc}); retrying in {RETRY_WAIT_SECONDS}s"
+                    f"({_brief(exc)}); retrying in {RETRY_WAIT_SECONDS}s, "
+                    f"resuming at {len(buf) / BYTES_PER_MB:.0f} MB"
                 )
                 time.sleep(RETRY_WAIT_SECONDS)
 
@@ -222,15 +225,82 @@ def iter_drive_pdfs(service: Resource, skip_completed: bool = True) -> Iterator[
         del data  # the caller now holds the only reference
 
 
-def _fetch_to_memory(service: Resource, file_id: str) -> bytes:
-    """Download a Drive file chunk by chunk into a BytesIO buffer."""
-    request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
-    buffer = io.BytesIO()
-    downloader = MediaIoBaseDownload(buffer, request, chunksize=CHUNK_SIZE)
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
-    return buffer.getvalue()
+class _RangeNotHonoured(RuntimeError):
+    """The server answered a ranged request with more bytes than were asked for."""
+
+
+def _fetch_to_memory(
+    service: Resource,
+    file_id: str,
+    filename: str = "",
+    total_size: int = 0,
+    buf: bytearray | None = None,
+) -> bytes:
+    """Download a Drive file in CHUNK_SIZE ranged requests and return its bytes.
+
+    Each chunk is retried on its own (see _fetch_chunk), from its own first byte.
+    Bytes already in `buf` are kept and the download continues right after them, so
+    a caller can resume after a failure. With `total_size` the loop runs until every
+    byte has arrived, even if a response was short. Without it, the first short
+    chunk (or a 416 past the end) is taken as the end of the file.
+    """
+    buf = bytearray() if buf is None else buf
+    label = filename or file_id
+    while True:
+        offset = len(buf)
+        if total_size and offset >= total_size:
+            break
+        end = offset + CHUNK_SIZE - 1
+        if total_size:
+            end = min(end, total_size - 1)
+        chunk = _fetch_chunk(service, file_id, label, offset, end)
+        if chunk is None:  # a 416 past the end of a file of unknown size
+            break
+        buf.extend(chunk)
+        if total_size and offset // PROGRESS_EVERY_BYTES != len(buf) // PROGRESS_EVERY_BYTES:
+            print(
+                f"[drive] {label}: {len(buf) / total_size * 100:.0f}% "
+                f"({len(buf) / BYTES_PER_MB:.0f}/{total_size / BYTES_PER_MB:.0f} MB)"
+            )
+        if not total_size and len(chunk) < end - offset + 1:
+            break  # unknown size: a short chunk is the last one
+    return bytes(buf)
+
+
+def _fetch_chunk(
+    service: Resource, file_id: str, label: str, offset: int, end: int
+) -> bytes | None:
+    """Fetch bytes `offset`..`end` of a file with a Range header, retrying this chunk only.
+
+    Returns None for a 416 at a non-zero offset (the file ended there). Network
+    errors, rate limits and 5xx are retried up to MAX_RETRIES times, waiting
+    RETRY_WAIT_SECONDS longer each time; other errors are raised straight away.
+    """
+    expected = end - offset + 1
+    for attempt in range(1, MAX_RETRIES + 2):
+        try:
+            request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
+            request.headers["Range"] = f"bytes={offset}-{end}"
+            chunk = request.execute()
+            if not chunk:
+                raise OSError("the server sent an empty chunk")
+            if len(chunk) > expected:
+                raise _RangeNotHonoured(
+                    f"asked for {expected} bytes at {offset} but got {len(chunk)}: "
+                    "the Range header was ignored"
+                )
+            return chunk
+        except _NETWORK_ERRORS as exc:
+            if isinstance(exc, HttpError) and exc.resp.status == 416 and offset > 0:
+                return None
+            if attempt > MAX_RETRIES or not _is_retryable(exc):
+                raise
+            wait = RETRY_WAIT_SECONDS * attempt
+            print(
+                f"[drive] {label} chunk at {offset / BYTES_PER_MB:.0f} MB: error "
+                f"({_brief(exc)}), retry {attempt}/{MAX_RETRIES} in {wait}s"
+            )
+            time.sleep(wait)
 
 
 def _is_retryable(exc: Exception) -> bool:
@@ -239,3 +309,7 @@ def _is_retryable(exc: Exception) -> bool:
         status = exc.resp.status
         return status in (408, 429) or status >= 500
     return True
+
+
+def _brief(exc: Exception) -> str:
+    return str(exc).replace("\n", " ")[:200]
