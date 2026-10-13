@@ -3,6 +3,7 @@
 PDF bytes are never written to disk.
 """
 
+import re
 import time
 from http.client import HTTPException
 from pathlib import Path
@@ -54,10 +55,48 @@ def build_drive_service() -> Resource:
     return build("drive", "v3", credentials=credentials, cache_discovery=False)
 
 
+_YEAR = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")  # a 4-digit year, not part of a longer number
+_MONTH = re.compile(r"(?<![a-z])(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*", re.IGNORECASE)
+_MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+
+
+def _extract_year(filename: str) -> int:
+    """Extract the first 4-digit year from a PDF filename.
+
+    Returns 9999 if no year found (sorts to end).
+    Examples:
+      '1945 July.PDF' -> 1945
+      '1963-April To1964-March Part-1.pdf' -> 1963
+      '2011-Jan.PDF' -> 2011
+    """
+    match = _YEAR.search(filename)
+    return int(match.group()) if match else 9999
+
+
+def _extract_month(filename: str) -> int:
+    """The first month named in a filename as 1-12, or 13 if there is none.
+
+    Spelling mistakes after the first three letters do not matter ('Januaray' is
+    January). The first month is the start of the issues the file covers.
+    """
+    match = _MONTH.search(filename)
+    return _MONTHS.index(match.group(1).lower()) + 1 if match else 13
+
+
+def _chronological_key(pdf: dict) -> tuple:
+    """Sort key: first year, then first month, then the name with numbers in numeric order."""
+    name = pdf["name"]
+    # re.split with a group alternates text and digits, so the parts always compare like with like
+    natural = [int(part) if i % 2 else part.lower() for i, part in enumerate(re.split(r"(\d+)", name))]
+    return (_extract_year(name), _extract_month(name), natural, name)
+
+
 def list_pdfs(service: Resource) -> list[dict]:
     """List every PDF under GOOGLE_DRIVE_FOLDER_ID, including subfolders.
 
-    Returns dicts of {file_id, name, modified_time, size}; size is in bytes.
+    Returns dicts of {file_id, name, modified_time, size}; size is in bytes. The list
+    is in chronological order: by the year in the file name, then the month, then
+    the name ('Part-2' after 'Part-1'), so a sync processes the oldest issues first.
     """
     root_id = (GOOGLE_DRIVE_FOLDER_ID or "").strip()
     if not root_id:
@@ -120,6 +159,7 @@ def list_pdfs(service: Resource) -> list[dict]:
             if not page_token:
                 break
 
+    pdfs.sort(key=_chronological_key)
     print(f"Found {len(pdfs)} PDFs in Drive folder")
     return pdfs
 
