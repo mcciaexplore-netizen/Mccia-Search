@@ -56,7 +56,19 @@ def ingest_one(pdf_data: bytes, drive_file_id: str, filename: str) -> str:
                 return "skipped"
             conn.commit()
 
-        pages = get_or_ocr(pdf_data, drive_file_id)
+        pages, failed_pages = get_or_ocr(pdf_data, drive_file_id)
+        if failed_pages:
+            # The pages that did work are in the OCR cache, so the next sync only has
+            # to redo these. Ingesting now would leave a permanent hole in the document.
+            shown = sorted(failed_pages)
+            listing = ", ".join(map(str, shown[:20])) + (
+                f", … (+{len(shown) - 20} more)" if len(shown) > 20 else ""
+            )
+            print(
+                f"[pipeline] {filename} — {len(failed_pages)} pages failed OCR: [{listing}]"
+            )
+            update_document_status(doc_id, "failed")
+            return "failed"
 
         first_text = next(
             (p["text"] for p in pages if p.get("text", "").strip()), ""

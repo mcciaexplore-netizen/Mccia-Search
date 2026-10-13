@@ -134,14 +134,17 @@ def ocr_page(image_bytes: bytes, page_num: int) -> str:
     return text.strip()
 
 
-def ocr_pdf(pdf_data: bytes | Path, drive_file_id: str | None = None) -> list[dict]:
+def ocr_pdf(
+    pdf_data: bytes | Path, drive_file_id: str | None = None
+) -> tuple[list[dict], set[int]]:
     """OCR every page of a PDF, OCR_CONCURRENCY pages at a time.
 
-    Returns [{page_number, text}, ...] with 1-based page numbers. When
-    `drive_file_id` is given, each page is cached on disk the moment it succeeds and
-    pages that are already cached are not sent to Gemini again, so an interrupted
-    run resumes where it stopped. A page that fails gets empty text and is not
-    cached; the rest still run.
+    Returns (pages, failed_page_numbers). `pages` is [{page_number, text}, ...] with
+    1-based page numbers. `failed_page_numbers` holds the pages that failed all their
+    retries: they have empty text in `pages` and, unlike a page that is really blank,
+    are not cached, so a re-run retries only those. When `drive_file_id` is given,
+    each page is cached on disk the moment it succeeds and cached pages are not sent
+    to Gemini again, so an interrupted run resumes where it stopped.
     """
     name = _source_name(pdf_data, drive_file_id)
     images = pdf_to_images(pdf_data)
@@ -158,7 +161,7 @@ def ocr_pdf(pdf_data: bytes | Path, drive_file_id: str | None = None) -> list[di
         print(f"[ocr] cache hit: all {total} pages already done — {name}")
 
     results: dict[int, str] = dict(done)
-    failed: list[int] = []
+    failed_page_numbers: set[int] = set()
     last_error: Exception | None = None
     completed = len(done)
     lock = threading.Lock()  # guards the shared state above and keeps output unscrambled
@@ -188,7 +191,7 @@ def ocr_pdf(pdf_data: bytes | Path, drive_file_id: str | None = None) -> list[di
         with lock:
             results[page_number] = text
             if error is not None:
-                failed.append(page_number)
+                failed_page_numbers.add(page_number)
                 last_error = error
                 print(f"[ocr] page {page_number}/{total} failed, storing empty text — {error}")
             completed += 1
@@ -211,31 +214,34 @@ def ocr_pdf(pdf_data: bytes | Path, drive_file_id: str | None = None) -> list[di
                     future.cancel()  # don't start the pages still waiting
                 raise
 
-    failed.sort()
-    if len(failed) == total:
+    if len(failed_page_numbers) == total:
         raise RuntimeError(
             f"OCR failed for every page of {name}; last error: {last_error}"
         ) from last_error
-    if failed:
+    if failed_page_numbers:
         print(
-            f"[ocr] WARNING: {len(failed)} of {total} pages failed in {name} "
-            f"(pages {', '.join(map(str, failed))}); they were not cached, so a "
-            "re-run retries only those"
+            f"[ocr] WARNING: {len(failed_page_numbers)} of {total} pages failed in {name} "
+            f"(pages {', '.join(map(str, sorted(failed_page_numbers)))}); they were not "
+            "cached, so a re-run retries only those"
         )
-    return [{"page_number": n, "text": results[n]} for n in range(1, total + 1)]
+    pages = [{"page_number": n, "text": results[n]} for n in range(1, total + 1)]
+    return pages, failed_page_numbers
 
 
-def get_or_ocr(pdf_data: bytes | Path, drive_file_id: str) -> list[dict]:
-    """Return the OCR result for a PDF, using the cache when it is complete.
+def get_or_ocr(
+    pdf_data: bytes | Path, drive_file_id: str
+) -> tuple[list[dict], set[int]]:
+    """Return (pages, failed_page_numbers) for a PDF, using the cache when it is complete.
 
-    A partial cache (an interrupted run) is not a result: ocr_pdf picks it up and
-    OCRs only the missing pages.
+    A complete cache has no failed pages. A partial cache (an interrupted or
+    partly failed run) is not a result: ocr_pdf picks it up and OCRs only the
+    missing pages.
     """
     cached = _load_cache(drive_file_id)
     total = _load_total(drive_file_id)
     if cached is not None and total is not None and _is_complete(cached, total):
         print(f"[ocr] cache hit for {_source_name(pdf_data, drive_file_id)}, skipping OCR")
-        return cached
+        return cached, set()
     return ocr_pdf(pdf_data, drive_file_id)
 
 
@@ -475,6 +481,6 @@ if __name__ == "__main__":
     if len(sys.argv) == 1:
         migrate_old_cache()  # run once by hand: python -m ingest.ocr
     else:
-        result = get_or_ocr(Path(sys.argv[1]), sys.argv[2])
-        print(f"Extracted {len(result)} pages")
+        result, failed = get_or_ocr(Path(sys.argv[1]), sys.argv[2])
+        print(f"Extracted {len(result)} pages ({len(failed)} failed)")
         print(result[0]["text"][:500])
