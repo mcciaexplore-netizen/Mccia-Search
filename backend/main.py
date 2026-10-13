@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from config import validate_config
 from db.connection import close_pool, get_connection, get_pool, init_db
 from generation.answer import rag
-from ingest.pipeline import run_pipeline
+from ingest.pipeline import is_sync_running, run_pipeline
 from models.schemas import (
     ChatRequest,
     ChatResponse,
@@ -23,6 +23,18 @@ from models.schemas import (
 async def lifespan(app: FastAPI):
     validate_config()
     init_db()
+    # A run that crashed or was killed leaves its document 'processing' for good.
+    with get_connection() as conn:
+        stuck = conn.execute(
+            "UPDATE documents SET status = 'failed' "
+            "WHERE status = 'processing' "
+            "RETURNING id, filename"
+        ).fetchall()
+        conn.commit()
+    if stuck:
+        print(f"[startup] reset {len(stuck)} stuck documents to failed:")
+        for row in stuck:
+            print(f"  id={row[0]} {row[1]}")
     get_pool()  # warm up the pool on startup
     print("[startup] database pool ready")
     print("[startup] mccia-search ready")
@@ -66,6 +78,8 @@ def chat(req: ChatRequest):
 
 @app.post("/ingest/sync", response_model=IngestTriggerResponse)
 def ingest_sync(background_tasks: BackgroundTasks):
+    if is_sync_running():
+        return IngestTriggerResponse(status="started", message="A sync is already running")
     background_tasks.add_task(run_pipeline)
     return IngestTriggerResponse(
         status="started", message="Sync started in background"

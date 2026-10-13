@@ -22,15 +22,17 @@ DOWNLOAD_PREFETCH = 2
 
 
 def _insert_document(conn, filename: str, drive_file_id: str) -> int | None:
-    # New document: inserted. Previously failed: reset to 'processing' for a retry.
-    # Completed or processing: the WHERE skips the update, so no row is returned.
+    # New document: inserted. Previously failed, or left 'processing' by a run that
+    # crashed or was killed: reset to 'processing' for a retry. Completed: the WHERE
+    # skips the update, so no row is returned. run_pipeline allows one sync at a time,
+    # so a 'processing' document here is never one that another run is working on.
     row = conn.execute(
         """
         INSERT INTO documents (filename, drive_file_id, status)
         VALUES (%s, %s, 'processing')
         ON CONFLICT (drive_file_id) DO UPDATE
           SET status = 'processing'
-          WHERE documents.status IN ('failed')
+          WHERE documents.status IN ('failed', 'processing')
         RETURNING id
         """,
         (filename, drive_file_id),
@@ -151,7 +153,31 @@ def _drain(out_queue: Queue) -> None:
             return
 
 
+_run_lock = threading.Lock()
+
+
+def is_sync_running() -> bool:
+    """True while a run_pipeline call is in progress in this process."""
+    return _run_lock.locked()
+
+
 def run_pipeline() -> dict:
+    """Ingest every Drive PDF that is not completed yet; one run at a time.
+
+    Documents left 'processing' by a crashed run are retried like failed ones, which
+    is only safe because two runs never overlap: a second call while one is running
+    returns at once with nothing done.
+    """
+    if not _run_lock.acquire(blocking=False):
+        print("[pipeline] a sync is already running; this request is ignored")
+        return {"ingested": 0, "skipped": 0, "failed": 0}
+    try:
+        return _run_pipeline()
+    finally:
+        _run_lock.release()
+
+
+def _run_pipeline() -> dict:
     service = build_drive_service()
 
     completed_ids = get_completed_drive_ids()
