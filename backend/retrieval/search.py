@@ -5,13 +5,15 @@ import time
 from functools import lru_cache
 
 import httpx
+import psycopg
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
 from pgvector import Vector
+from psycopg_pool import PoolTimeout
 
 from config import GEMINI_API_KEY, GEMINI_EMBEDDING_MODEL
-from db.connection import get_connection
+from db.connection import get_pooled_connection
 
 TOP_K = 5  # number of chunks to return
 MIN_SIMILARITY = 0.4  # discard chunks below this score
@@ -92,8 +94,7 @@ def search(query: str, top_k: int = TOP_K) -> list[dict]:
             "min_similarity": MIN_SIMILARITY,
             "top_k": top_k,
         }
-        with get_connection() as conn:
-            rows = conn.execute(_SEARCH_SQL, params).fetchall()
+        rows = _run_search(params)
         results = [
             {
                 "chunk_id": chunk_id,
@@ -118,6 +119,24 @@ def search(query: str, top_k: int = TOP_K) -> list[dict]:
     top = f"{results[0]['similarity']:.2f}" if results else "n/a"
     print(f"[search] query returned {len(results)} chunks (top similarity: {top})")
     return results
+
+
+def _run_search(params: dict) -> list[tuple]:
+    """Run the similarity query on a pooled connection.
+
+    A pooled connection can go stale while it sits idle (Neon or the network drops
+    it). The pool discards a connection that fails, so one retry gets a fresh one.
+    """
+    for attempt in (1, 2):
+        try:
+            with get_pooled_connection() as conn:
+                return conn.execute(_SEARCH_SQL, params).fetchall()
+        except PoolTimeout:
+            raise  # every connection is busy; retrying would only wait again
+        except psycopg.OperationalError:
+            if attempt == 2:
+                raise
+            print("[search] database connection was stale; retrying once")
 
 
 @lru_cache(maxsize=1)

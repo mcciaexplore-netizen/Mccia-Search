@@ -6,7 +6,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import validate_config
-from db.connection import get_connection, init_db
+from db.connection import close_pool, get_connection, get_pool, init_db
 from generation.answer import rag
 from ingest.pipeline import run_pipeline
 from models.schemas import (
@@ -23,8 +23,11 @@ from models.schemas import (
 async def lifespan(app: FastAPI):
     validate_config()
     init_db()
+    get_pool()  # warm up the pool on startup
+    print("[startup] database pool ready")
     print("[startup] mccia-search ready")
     yield
+    close_pool()
 
 
 app = FastAPI(title="MCCIA Search", lifespan=lifespan)

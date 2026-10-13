@@ -1,6 +1,8 @@
 """Neon Postgres connection management."""
 
+import atexit
 import struct
+import threading
 from pathlib import Path
 
 import psycopg
@@ -8,11 +10,17 @@ from pgvector.psycopg import register_vector
 from psycopg.abc import Buffer
 from psycopg.adapt import Loader
 from psycopg.pq import Format
+from psycopg_pool import ConnectionPool
 
 from config import DATABASE_URL
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 CONNECT_TIMEOUT_SECONDS = 30  # allows for Neon waking a suspended compute
+POOL_MIN_SIZE = 1
+POOL_MAX_SIZE = 5
+
+_pool: ConnectionPool | None = None
+_pool_lock = threading.Lock()
 
 
 class _VectorLoader(Loader):
@@ -50,6 +58,68 @@ def get_connection() -> psycopg.Connection:
         conn.close()
         raise
     return conn
+
+
+def get_pool() -> ConnectionPool:
+    """The shared connection pool, created (and connected) on its first call.
+
+    Opening a connection to Neon takes seconds; the pool keeps connections open so
+    a request can reuse one. Pooled connections are meant for read queries such as
+    the similarity search, and differ from get_connection() in two ways, both to save
+    round trips to the database:
+    - autocommit: each statement commits on its own. A normal transaction adds a
+      BEGIN and a COMMIT, about 0.9 s per query from Pune to Neon in Ohio.
+    - the pgvector type is not registered, which costs about 3 s per new connection.
+      Pass vectors as text, Vector(...).to_text() with %s::vector, as search does.
+    Use get_connection() for writes, transactions, or reading vector columns.
+    """
+    global _pool
+    with _pool_lock:
+        if _pool is None:
+            url = (DATABASE_URL or "").strip()
+            if not url:
+                raise RuntimeError(
+                    "DATABASE_URL is not set. Add your Neon connection string to "
+                    ".env (see .env.example)."
+                )
+            pool = ConnectionPool(
+                conninfo=url,
+                min_size=POOL_MIN_SIZE,
+                max_size=POOL_MAX_SIZE,
+                kwargs={
+                    # See _connect(): prepared statements break behind PgBouncer.
+                    "prepare_threshold": None,
+                    "connect_timeout": CONNECT_TIMEOUT_SECONDS,
+                    "autocommit": True,
+                },
+                open=True,
+            )
+            try:
+                pool.wait(timeout=CONNECT_TIMEOUT_SECONDS)  # first connection is ready
+            except BaseException:
+                pool.close()
+                raise
+            _pool = pool
+            atexit.register(close_pool)
+        return _pool
+
+
+def get_pooled_connection():
+    """A pooled connection, as a context manager: `with get_pooled_connection() as conn:`.
+
+    Leaving the block hands the connection back to the pool instead of closing it.
+    See get_pool() for how pooled connections differ from get_connection().
+    """
+    return get_pool().connection()
+
+
+def close_pool() -> None:
+    """Close the shared pool, if there is one. A later get_pool() makes a new one."""
+    global _pool
+    with _pool_lock:
+        pool, _pool = _pool, None
+    if pool is not None:
+        pool.close()
 
 
 def init_db() -> None:
