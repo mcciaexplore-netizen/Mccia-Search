@@ -9,3 +9,4 @@ __pycache__/
 .DS_Store
 .env*.local
 web/package-lock.json
+*.tsbuildinfo
