@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import { sendChat } from "@/lib/api";
 import type { Message } from "@/lib/types";
+import Logo from "./Logo";
 import MessageBubble from "./MessageBubble";
 
 const EXAMPLE_QUESTIONS = [
@@ -32,23 +33,9 @@ function describeError(err: unknown): string {
 function EmptyState({ onPick }: { onPick: (question: string) => void }) {
   return (
     <div className="flex h-full flex-col items-center justify-center px-6 py-10 text-center">
-      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary">
-        <svg
-          aria-hidden="true"
-          viewBox="0 0 32 32"
-          fill="none"
-          className="h-8 w-8"
-        >
-          <circle cx="14" cy="14" r="7" stroke="white" strokeWidth="2" />
-          <path d="M19.5 19.5 25 25" stroke="white" strokeWidth="2" strokeLinecap="round" />
-          <path
-            d="M24 3l1.2 3.8L29 8l-3.8 1.2L24 13l-1.2-3.8L19 8l3.8-1.2L24 3z"
-            fill="#E8871A"
-          />
-        </svg>
-      </div>
-      <h1 className="mt-5 text-2xl font-semibold text-primary">MCCIA Search</h1>
-      <p className="mt-2 max-w-md text-base text-muted">
+      <Logo width={240} />
+      <h1 className="mt-6 text-3xl font-semibold text-primary">MCCIA Search</h1>
+      <p className="mt-2 max-w-md text-lg text-muted">
         Ask questions about Sampada magazine and MCCIA documents
       </p>
       <div className="mt-8 flex max-w-3xl flex-wrap justify-center gap-3">
@@ -57,7 +44,7 @@ function EmptyState({ onPick }: { onPick: (question: string) => void }) {
             key={question}
             type="button"
             onClick={() => onPick(question)}
-            className="rounded-full border border-primary/20 bg-surface px-4 py-2 text-sm text-primary shadow-sm transition hover:border-accent hover:shadow focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+            className="rounded-full border border-primary/20 bg-surface px-5 py-2.5 text-base text-primary shadow-sm transition hover:border-accent hover:shadow focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             {question}
           </button>
@@ -83,8 +70,17 @@ function TypingIndicator() {
   );
 }
 
-export default function ChatWindow() {
-  const [messages, setMessages] = useState<Message[]>([]);
+interface ChatWindowProps {
+  /** Messages to start from, when a saved chat is opened. Read once, when the window mounts. */
+  initialMessages?: Message[];
+  /** Called with the full list after every message, so the chat can be saved. */
+  onMessagesChange?: (messages: Message[]) => void;
+}
+
+export default function ChatWindow({ initialMessages = [], onMessagesChange }: ChatWindowProps) {
+  const [messages, setMessages] = useState<Message[]>(initialMessages);
+  // The latest list, readable from the async code below even after this window is gone.
+  const messagesRef = useRef<Message[]>(initialMessages);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -116,6 +112,12 @@ export default function ChatWindow() {
     wasLoading.current = loading;
   }, [loading]);
 
+  const commit = (next: Message[]) => {
+    messagesRef.current = next;
+    setMessages(next);
+    onMessagesChange?.(next);
+  };
+
   const submit = async () => {
     const query = input.trim();
     if (!query || loading) return;
@@ -126,7 +128,7 @@ export default function ChatWindow() {
       content: query,
       timestamp: new Date(),
     };
-    setMessages((prev) => [...prev, userMessage]);
+    commit([...messagesRef.current, userMessage]);
     setInput("");
     setLoading(true);
 
@@ -154,7 +156,8 @@ export default function ChatWindow() {
         timestamp: new Date(),
       };
     }
-    setMessages((prev) => [...prev, reply]);
+    // Still saved if the user opened another chat meanwhile: the answer goes to this chat.
+    commit([...messagesRef.current, reply]);
     setLoading(false);
   };
 
@@ -211,7 +214,7 @@ export default function ChatWindow() {
             rows={1}
             placeholder="Ask anything about MCCIA documents..."
             aria-label="Your question"
-            className="min-h-[2.5rem] flex-1 resize-none bg-transparent px-3 py-2 text-base leading-relaxed text-ink placeholder:text-muted focus:outline-none disabled:opacity-60"
+            className="min-h-[2.5rem] flex-1 resize-none bg-transparent px-3 py-2 text-base leading-relaxed md:text-lg text-ink placeholder:text-muted focus:outline-none disabled:opacity-60"
           />
           <button
             type="submit"

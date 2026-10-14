@@ -19,3 +19,9 @@ export async function proxyToBackend(
     );
   }
 }
+
+/** The browser's address as the proxy sees it, so the backend's audit log can record who asked. */
+export function clientAddress(req: Request & { ip?: string }): Record<string, string> {
+  const forwarded = req.headers.get("x-forwarded-for") ?? req.ip ?? "";
+  return forwarded ? { "X-Forwarded-For": forwarded } : {};
+}

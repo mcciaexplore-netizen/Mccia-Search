@@ -1,4 +1,4 @@
-import type { ChatResponse } from "./types";
+import type { AuditResponse, ChatResponse, DocumentsResponse } from "./types";
 
 // Every call goes to this app's own /api routes (src/app/api), which forward it to
 // the backend. The browser never talks to the backend directly, so the page works on
@@ -31,6 +31,25 @@ export async function getIngestStatus() {
 
 export async function triggerSync() {
   const res = await fetch("/api/ingest/sync", { method: "POST" });
+  if (!res.ok) await failWith(res);
+  return res.json();
+}
+
+export async function getDocuments(): Promise<DocumentsResponse> {
+  const res = await fetch("/api/documents");
+  if (!res.ok) await failWith(res);
+  return res.json();
+}
+
+export async function getAuditLog(
+  options: { limit?: number; offset?: number; event?: "chat" | "sync" } = {}
+): Promise<AuditResponse> {
+  const params = new URLSearchParams();
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.offset !== undefined) params.set("offset", String(options.offset));
+  if (options.event) params.set("event", options.event);
+  const query = params.toString();
+  const res = await fetch("/api/audit" + (query ? "?" + query : ""));
   if (!res.ok) await failWith(res);
   return res.json();
 }

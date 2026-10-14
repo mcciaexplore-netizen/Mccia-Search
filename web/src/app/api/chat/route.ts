@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { proxyToBackend } from "@/lib/proxy";
+import { clientAddress, proxyToBackend } from "@/lib/proxy";
 
 export async function POST(req: NextRequest) {
   let body: unknown;
@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
   }
   return proxyToBackend("/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...clientAddress(req) },
     body: JSON.stringify(body),
   });
 }
