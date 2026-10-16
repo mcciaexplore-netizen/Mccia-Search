@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef } from "react";
 import { pageImageUrl } from "@/lib/api";
+import PageImage from "./PageImage";
 
 interface PageViewerProps {
   filename: string;
@@ -10,20 +11,13 @@ interface PageViewerProps {
   onClose: () => void;
 }
 
-type Status = "loading" | "ready" | "error";
-
-/** A window showing one page of a magazine as it was printed. */
+/** A pop-up window showing one page of a magazine as it was printed. */
 export default function PageViewer({ filename, documentId, pageNumber, onClose }: PageViewerProps) {
-  const [status, setStatus] = useState<Status>("loading");
-  const [attempt, setAttempt] = useState(0);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const titleId = useId();
-
-  // A retry asks for the page again under a new address, so a failed answer is not reused.
-  const src = pageImageUrl(documentId, pageNumber) + (attempt > 0 ? `?retry=${attempt}` : "");
 
   // While open: Escape closes, the page behind does not scroll, and focus starts on
   // Close and goes back to the button that opened the window.
@@ -59,11 +53,6 @@ export default function PageViewer({ filename, documentId, pageNumber, onClose }
     }
   }
 
-  function retry() {
-    setStatus("loading");
-    setAttempt((n) => n + 1);
-  }
-
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-6"
@@ -84,7 +73,7 @@ export default function PageViewer({ filename, documentId, pageNumber, onClose }
             {filename} <span className="font-normal text-muted">· page {pageNumber}</span>
           </h2>
           <a
-            href={src}
+            href={pageImageUrl(documentId, pageNumber)}
             target="_blank"
             rel="noopener noreferrer"
             className="shrink-0 rounded-lg px-3 py-1.5 text-sm font-medium text-primary ring-1 ring-primary/30 transition hover:bg-primary/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
@@ -105,32 +94,7 @@ export default function PageViewer({ filename, documentId, pageNumber, onClose }
         </div>
 
         <div className="overflow-auto bg-gray-100 p-3 sm:p-4">
-          {status === "loading" && (
-            <p role="status" className="py-16 text-center text-base text-muted">
-              Loading the page... The first page of an issue can take up to a minute.
-            </p>
-          )}
-          {status === "error" && (
-            <div role="alert" className="py-16 text-center">
-              <p className="text-base text-primary">Could not load this page.</p>
-              <button
-                type="button"
-                onClick={retry}
-                className="mt-3 rounded-lg bg-accent px-5 py-2.5 text-sm font-semibold text-ink transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-              >
-                Try again
-              </button>
-            </div>
-          )}
-          {/* A plain img: the page is already a finished JPEG served by our own route. */}
-          <img
-            key={attempt}
-            src={src}
-            alt={`${filename}, page ${pageNumber}`}
-            onLoad={() => setStatus("ready")}
-            onError={() => setStatus("error")}
-            className={status === "ready" ? "mx-auto h-auto w-full max-w-3xl rounded bg-white shadow" : "hidden"}
-          />
+          <PageImage filename={filename} documentId={documentId} pageNumber={pageNumber} />
         </div>
       </div>
     </div>

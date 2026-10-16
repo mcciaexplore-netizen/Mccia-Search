@@ -37,7 +37,7 @@ export default function MessageBubble({ message }: { message: Message }) {
             No results found
           </span>
         )}
-        {showSources && <SourceList sources={message.sources ?? []} />}
+        {showSources && <SourceList sources={message.sources ?? []} messageId={message.id} />}
       </div>
       {time}
     </div>

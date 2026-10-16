@@ -1,14 +1,24 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ChatWindow from "./ChatWindow";
 import HistoryList from "./HistoryList";
 import Logo from "./Logo";
+import PagePanel from "./PagePanel";
 import SettingsPanel from "./SettingsPanel";
 import { loadChats, removeChat, saveChats, upsertChat } from "@/lib/history";
+import { SourcePanelContext } from "@/lib/sourcePanel";
+import type { SourcePanelApi } from "@/lib/sourcePanel";
+import { panelFor, sourceKey } from "@/lib/sources";
+import type { PanelPin, ViewableSource } from "@/lib/sources";
 import type { Chat, Message } from "@/lib/types";
+import { useMediaQuery } from "@/lib/useMediaQuery";
 
 type View = "chat" | "settings";
+
+// The page panel needs room beside the chat, so it only shows from this width up;
+// on narrower windows a page opens in a pop-up instead.
+const WIDE_WINDOW = "(min-width: 1280px)";
 
 // crypto.randomUUID() only exists in secure contexts, and this app may be served
 // over plain HTTP on the office network.
@@ -21,6 +31,10 @@ export default function ChatShell() {
   const [activeId, setActiveId] = useState(newChatId);
   const [view, setView] = useState<View>("chat");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const wide = useMediaQuery(WIDE_WINDOW);
+  // A source the user picked, and the answer whose panel the user closed.
+  const [pin, setPin] = useState<PanelPin | null>(null);
+  const [closedFor, setClosedFor] = useState<string | null>(null);
 
   // The history comes from this browser's storage, so it can only be read after mounting.
   useEffect(() => {
@@ -84,6 +98,30 @@ export default function ChatShell() {
 
   const activeMessages = chats.find((chat) => chat.id === activeId)?.messages ?? [];
 
+  // The page panel shows the newest answer's sources, the best match first; a source the
+  // user picks (in any answer) takes over, and a new answer or another chat starts afresh.
+  const panel = panelFor(activeMessages, pin);
+  const newestAnswerId = panelFor(activeMessages, null)?.messageId ?? null;
+  useEffect(() => {
+    setPin(null);
+    setClosedFor(null);
+  }, [activeId, newestAnswerId]);
+
+  const panelOpen = wide && view === "chat" && panel !== null && closedFor !== panel.messageId;
+
+  const sourcePanel = useMemo<SourcePanelApi>(
+    () => ({
+      enabled: wide && view === "chat",
+      selected: panel ? { messageId: panel.messageId, key: panel.selectedKey } : null,
+      select: (messageId: string, source: ViewableSource) => {
+        setPin({ messageId, key: sourceKey(source) });
+        setClosedFor(null);
+      },
+    }),
+    // `panel` is rebuilt on every render; what matters is what it holds.
+    [wide, view, panel?.messageId, panel?.selectedKey]
+  );
+
   return (
     <div className="min-h-dvh bg-page">
       {sidebarOpen && (
@@ -143,7 +181,16 @@ export default function ChatShell() {
         </div>
       </aside>
 
-      <main className="flex h-dvh flex-col md:pl-72">
+      {panelOpen && panel && (
+        <PagePanel
+          sources={panel.sources}
+          selectedKey={panel.selectedKey}
+          onSelect={(source) => sourcePanel.select(panel.messageId, source)}
+          onClose={() => setClosedFor(panel.messageId)}
+        />
+      )}
+
+      <main className={`flex h-dvh flex-col md:pl-72 ${panelOpen ? "xl:pr-[26rem]" : ""}`}>
         <header className="flex items-center gap-3 bg-primary px-4 py-3 text-white md:hidden">
           <button
             type="button"
@@ -175,11 +222,13 @@ export default function ChatShell() {
           {view === "settings" ? (
             <SettingsPanel />
           ) : (
-            <ChatWindow
-              key={activeId}
-              initialMessages={activeMessages}
-              onMessagesChange={(messages) => handleMessages(activeId, messages)}
-            />
+            <SourcePanelContext.Provider value={sourcePanel}>
+              <ChatWindow
+                key={activeId}
+                initialMessages={activeMessages}
+                onMessagesChange={(messages) => handleMessages(activeId, messages)}
+              />
+            </SourcePanelContext.Provider>
           )}
         </div>
       </main>
