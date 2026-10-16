@@ -19,3 +19,12 @@ dependencies = [
     "pytest>=8.0",
     "pytesseract>=0.3.13",
 ]
+
+[project.optional-dependencies]
+easyocr = [
+    "easyocr>=1.7.2",
+]
+paddle = [
+    "paddleocr>=3.7.0",
+    "paddlepaddle>=3.3.1",
+]

@@ -36,8 +36,9 @@ GOOGLE_SERVICE_ACCOUNT_FILE = _project_path(
     os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE") or "./credentials.json"
 )
 OCR_CACHE_DIR = _project_path(os.environ.get("OCR_CACHE_DIR") or "./staging/ocr_cache")
-# "gemini" (paid API, the default) or "tesseract" (free, runs on this machine). ingest.ocr
-# rejects any other value when OCR starts, so a typo cannot quietly fall back to the paid engine.
+# "gemini" (paid API, the default) or a free engine that runs on this machine: "tesseract",
+# "easyocr" or "paddle". ingest.ocr rejects any other value when OCR starts, so a typo
+# cannot quietly fall back to the paid engine.
 OCR_ENGINE = (os.environ.get("OCR_ENGINE") or "").strip().lower() or "gemini"
 # Where the "View page" images are kept once rendered (pages.py trims it to a size limit).
 PAGE_CACHE_DIR = _project_path(os.environ.get("PAGE_CACHE_DIR") or "./staging/page_cache")

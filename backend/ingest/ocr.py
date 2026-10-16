@@ -1,4 +1,4 @@
-"""OCR of PDF documents using Gemini, or Tesseract when OCR_ENGINE=tesseract."""
+"""OCR of PDF documents using Gemini, or a free local engine (OCR_ENGINE: tesseract, easyocr, paddle)."""
 
 import io
 import json
@@ -22,7 +22,7 @@ from config import GEMINI_API_KEY, GEMINI_OCR_MODEL, OCR_CACHE_DIR, OCR_ENGINE
 # Set GEMINI_OCR_MODEL in .env to switch models (gemini-2.0-flash was shut down
 # on 2026-06-01).
 OCR_MODEL = GEMINI_OCR_MODEL
-ENGINES = ("gemini", "tesseract")  # the values OCR_ENGINE accepts
+ENGINES = ("gemini", "tesseract", "easyocr", "paddle")  # the values OCR_ENGINE accepts
 
 SYSTEM_PROMPT = (
     "You are an OCR engine. Extract ALL text from this scanned document page "
@@ -40,6 +40,8 @@ OCR_CONCURRENCY = max(1, int(os.environ.get("OCR_CONCURRENCY") or "4"))  # pages
 PROGRESS_EVERY = 10  # print progress every this many pages
 TESSERACT_LANGS = "mar+hin+eng"  # Marathi, Hindi, English
 TESSERACT_TIMEOUT_SECONDS = 120  # a page that takes longer is killed and counts as failed
+EASYOCR_LANGS = ["mr", "hi", "en"]  # Marathi, Hindi, English
+PADDLE_LANG = "devanagari"  # Paddle's one model for Marathi and Hindi; it reads Latin letters too
 
 DEVANAGARI_START, DEVANAGARI_END = "ऀ", "ॿ"
 LANGUAGE_SAMPLE_CHARS = 500
@@ -97,14 +99,18 @@ def pdf_to_images(pdf_data: bytes | Path) -> list[bytes]:
 def ocr_page(image_bytes: bytes, page_num: int) -> str:
     """Extract the text of one page image; "" if the page is blank.
 
-    Uses Gemini, or Tesseract when OCR_ENGINE=tesseract. Gemini's transient errors
-    (network, 408/429/5xx) are retried after 2s, 4s and 8s.
+    Uses Gemini, or the free engine named by OCR_ENGINE (tesseract, easyocr or paddle).
+    Gemini's transient errors (network, 408/429/5xx) are retried after 2s, 4s and 8s.
     Raises OCRPageError if the page still fails or the error is not retryable.
     """
     if not image_bytes:
         raise OCRPageError(f"page {page_num}: no image data")
     if OCR_ENGINE == "tesseract":
         return _ocr_page_tesseract(image_bytes, page_num)
+    if OCR_ENGINE == "easyocr":
+        return _ocr_page_easyocr(image_bytes, page_num)
+    if OCR_ENGINE == "paddle":
+        return _ocr_page_paddle(image_bytes, page_num)
     if OCR_ENGINE != "gemini":
         raise _unknown_engine()
 
@@ -296,6 +302,10 @@ def _prepare_engine() -> None:
         _get_client()
     elif OCR_ENGINE == "tesseract":
         _check_tesseract()
+    elif OCR_ENGINE == "easyocr":
+        _easyocr_reader()  # loads (and the first time downloads) the model before the workers start
+    elif OCR_ENGINE == "paddle":
+        _paddle_engine()
     else:
         raise _unknown_engine()
 
@@ -348,6 +358,69 @@ def _ocr_page_tesseract(image_bytes: bytes, page_num: int) -> str:
         # OSError covers an unreadable image or a missing program; RuntimeError, a timeout.
         raise OCRPageError(f"page {page_num}: Tesseract failed: {_brief(exc)}") from exc
     return text.strip()
+
+
+_engine_lock = threading.Lock()  # EasyOCR and PaddleOCR must not be called from several threads at once
+
+
+@lru_cache(maxsize=1)
+def _easyocr_reader():
+    """The EasyOCR model, built once; the first time, it downloads its weights."""
+    try:
+        import easyocr
+    except ImportError as exc:
+        raise RuntimeError(
+            "OCR_ENGINE=easyocr needs the easyocr package. Run `uv sync --extra easyocr` in backend/."
+        ) from exc
+    print("[ocr] loading the EasyOCR model...")
+    return easyocr.Reader(EASYOCR_LANGS, gpu=False, verbose=False)
+
+
+def _ocr_page_easyocr(image_bytes: bytes, page_num: int) -> str:
+    """Extract the text of one page image with EasyOCR; "" if the page is blank."""
+    reader = _easyocr_reader()
+    try:
+        with _engine_lock:
+            paragraphs = reader.readtext(image_bytes, detail=0, paragraph=True)
+    except Exception as exc:  # the library raises whatever its image or model code raises
+        raise OCRPageError(f"page {page_num}: EasyOCR failed: {_brief(exc)}") from exc
+    return "\n\n".join(paragraphs).strip()
+
+
+@lru_cache(maxsize=1)
+def _paddle_engine():
+    """The PaddleOCR model, built once; the first time, it downloads its weights."""
+    try:
+        from paddleocr import PaddleOCR
+    except ImportError as exc:
+        raise RuntimeError(
+            "OCR_ENGINE=paddle needs the paddleocr package. Run `uv sync --extra paddle` in backend/."
+        ) from exc
+    print("[ocr] loading the PaddleOCR model...")
+    # Pages are scanned upright and flat, so the page-correction models are left out.
+    return PaddleOCR(
+        lang=PADDLE_LANG,
+        use_doc_orientation_classify=False,
+        use_doc_unwarping=False,
+        use_textline_orientation=False,
+    )
+
+
+def _ocr_page_paddle(image_bytes: bytes, page_num: int) -> str:
+    """Extract the text of one page image with PaddleOCR; "" if the page is blank."""
+    engine = _paddle_engine()
+    try:
+        import numpy as np
+        from PIL import Image
+
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            pixels = np.ascontiguousarray(np.asarray(image.convert("RGB"))[:, :, ::-1])  # Paddle reads BGR
+        with _engine_lock:
+            results = engine.predict(pixels)
+        lines = [text for result in results for text in result["rec_texts"]]
+    except Exception as exc:  # the library raises whatever its image or model code raises
+        raise OCRPageError(f"page {page_num}: PaddleOCR failed: {_brief(exc)}") from exc
+    return "\n".join(lines).strip()
 
 
 def _is_retryable(exc: Exception) -> bool:
