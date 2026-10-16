@@ -197,6 +197,7 @@ export default function ChatShell() {
           layout="sidebar"
           sources={panel.sources}
           selectedKey={panel.selectedKey}
+          citedKeys={panel.citedKeys}
           onSelect={choosePage}
           onClose={() => setClosedFor(panel.messageId)}
         />
@@ -209,6 +210,7 @@ export default function ChatShell() {
             layout="drawer"
             sources={panel.sources}
             selectedKey={panel.selectedKey}
+            citedKeys={panel.citedKeys}
             onSelect={choosePage}
             onClose={() => setDrawerOpen(false)}
           />

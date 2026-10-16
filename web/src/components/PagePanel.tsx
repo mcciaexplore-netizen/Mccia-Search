@@ -8,9 +8,11 @@ import PageImage from "./PageImage";
 interface PagePanelProps {
   /** "sidebar" sits beside the chat on a wide window; "drawer" slides over it on a narrow one. */
   layout: "sidebar" | "drawer";
-  /** The pages cited by one answer, best match first. */
+  /** The pages found for one answer: the ones it cites first, then the rest. */
   sources: ViewableSource[];
   selectedKey: string;
+  /** Which of the pages the answer itself names, so they can be marked. */
+  citedKeys?: string[];
   onSelect: (source: ViewableSource) => void;
   onClose: () => void;
 }
@@ -21,7 +23,7 @@ const LAYOUT_CLASSES = {
 };
 
 /** The scanned pages an answer was taken from, with a list to switch between them. */
-export default function PagePanel({ layout, sources, selectedKey, onSelect, onClose }: PagePanelProps) {
+export default function PagePanel({ layout, sources, selectedKey, citedKeys = [], onSelect, onClose }: PagePanelProps) {
   const selected = sources.find((source) => sourceKey(source) === selectedKey) ?? sources[0];
 
   return (
@@ -50,17 +52,20 @@ export default function PagePanel({ layout, sources, selectedKey, onSelect, onCl
         {sources.map((source) => {
           const key = sourceKey(source);
           const active = key === selectedKey;
+          const cited = citedKeys.includes(key);
           return (
             <li key={key} className="max-w-full">
               <button
                 type="button"
                 onClick={() => onSelect(source)}
                 aria-pressed={active}
-                title={`${source.filename}, page ${source.page_number}`}
+                aria-label={cited ? `${source.filename}, page ${source.page_number}, cited in the answer` : undefined}
+                title={cited ? `${source.filename}, page ${source.page_number} (cited in the answer)` : `${source.filename}, page ${source.page_number}`}
                 className={`inline-flex max-w-full items-center gap-1.5 rounded-full px-3 py-1 text-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${
                   active ? "bg-primary text-white" : "bg-gray-100 text-primary hover:bg-gray-200"
                 }`}
               >
+                {cited && <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-accent" />}
                 <span className="max-w-[9rem] truncate">{source.filename}</span>
                 <span className="shrink-0 font-medium">p.{source.page_number}</span>
               </button>
