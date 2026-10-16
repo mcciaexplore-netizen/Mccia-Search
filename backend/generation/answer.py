@@ -133,6 +133,7 @@ def _build_sources(chunks: list[dict]) -> list[dict]:
             {
                 "filename": chunk["filename"],
                 "page_number": chunk.get("page_number"),
+                "document_id": chunk.get("document_id"),
                 "similarity": chunk["similarity"],
             },
         )

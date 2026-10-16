@@ -20,6 +20,33 @@ export async function proxyToBackend(
   }
 }
 
+/**
+ * Forward a request to the backend and relay a file (a page image) as it is. The first
+ * view of a page can take a while, so the body is passed on as a stream. Errors come
+ * back as JSON with the backend's status code, like proxyToBackend.
+ */
+export async function proxyFileFromBackend(path: string): Promise<Response> {
+  try {
+    const res = await fetch(`${BACKEND}${path}`, { cache: "no-store" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({ detail: `Server error ${res.status}` }));
+      return NextResponse.json(data, { status: res.status });
+    }
+    return new Response(res.body, {
+      status: 200,
+      headers: {
+        "Content-Type": res.headers.get("content-type") ?? "application/octet-stream",
+        "Cache-Control": res.headers.get("cache-control") ?? "no-store",
+      },
+    });
+  } catch {
+    return NextResponse.json(
+      { detail: "The server could not be reached. Please try again." },
+      { status: 502 }
+    );
+  }
+}
+
 /** The browser's address as the proxy sees it, so the backend's audit log can record who asked. */
 export function clientAddress(req: Request & { ip?: string }): Record<string, string> {
   const forwarded = req.headers.get("x-forwarded-for") ?? req.ip ?? "";

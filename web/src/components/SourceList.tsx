@@ -1,3 +1,7 @@
+"use client";
+
+import { useCallback, useState } from "react";
+import PageViewer from "@/components/PageViewer";
 import type { Source } from "@/lib/types";
 
 function DocumentIcon() {
@@ -13,7 +17,17 @@ function DocumentIcon() {
   );
 }
 
+// What View page needs; sources from chats saved before it existed lack a document_id.
+type Viewable = { filename: string; page_number: number; document_id: number };
+
+function viewable(source: Source): source is Source & Viewable {
+  return source.page_number != null && source.document_id != null;
+}
+
 export default function SourceList({ sources }: { sources: Source[] }) {
+  const [viewing, setViewing] = useState<Viewable | null>(null);
+  const close = useCallback(() => setViewing(null), []);
+
   return (
     <div className="mt-3 border-t border-black/5 pt-3">
       <p className="mb-2 text-sm font-medium text-muted">Sources</p>
@@ -33,9 +47,27 @@ export default function SourceList({ sources }: { sources: Source[] }) {
             <span className="shrink-0 text-primary/70">
               {(source.similarity * 100).toFixed(0)}% match
             </span>
+            {viewable(source) && (
+              <button
+                type="button"
+                onClick={() => setViewing(source)}
+                aria-label={`View page ${source.page_number} of ${source.filename}`}
+                className="-mr-1.5 shrink-0 rounded-full bg-primary px-3 py-0.5 text-sm font-medium text-white transition hover:bg-primary/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+              >
+                View page
+              </button>
+            )}
           </li>
         ))}
       </ul>
+      {viewing && (
+        <PageViewer
+          filename={viewing.filename}
+          documentId={viewing.document_id}
+          pageNumber={viewing.page_number}
+          onClose={close}
+        />
+      )}
     </div>
   );
 }

@@ -39,6 +39,8 @@ OCR_CACHE_DIR = _project_path(os.environ.get("OCR_CACHE_DIR") or "./staging/ocr_
 # "gemini" (paid API, the default) or "tesseract" (free, runs on this machine). ingest.ocr
 # rejects any other value when OCR starts, so a typo cannot quietly fall back to the paid engine.
 OCR_ENGINE = (os.environ.get("OCR_ENGINE") or "").strip().lower() or "gemini"
+# Where the "View page" images are kept once rendered (pages.py trims it to a size limit).
+PAGE_CACHE_DIR = _project_path(os.environ.get("PAGE_CACHE_DIR") or "./staging/page_cache")
 
 
 def validate_config() -> None:

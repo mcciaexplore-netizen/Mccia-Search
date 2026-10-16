@@ -1,6 +1,8 @@
 export interface Source {
   filename: string;
   page_number: number | null;
+  // Missing on chats saved before "View page" existed: such a source has no page link.
+  document_id?: number | null;
   similarity: number;
 }
 

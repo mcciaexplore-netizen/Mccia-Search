@@ -5,8 +5,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 import audit
+import pages
 from config import validate_config
 from db.connection import close_pool, get_connection, get_pool, get_pooled_connection, init_db
 from generation.answer import rag
@@ -187,6 +189,22 @@ def documents():
         },
         "documents": items,
     }
+
+
+@app.get("/documents/{document_id}/pages/{page_number}")
+def document_page(document_id: int, page_number: int):
+    """One page of a document as a JPEG, so a source can be viewed as it was printed.
+
+    The first view of an issue downloads its PDF from Google Drive and can take a while;
+    after that the page is served from the cache.
+    """
+    try:
+        path = pages.get_page_image(document_id, page_number)
+    except pages.PageNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except pages.PageUnavailable as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/audit", response_model=AuditResponse)

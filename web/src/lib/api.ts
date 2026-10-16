@@ -41,6 +41,11 @@ export async function getDocuments(): Promise<DocumentsResponse> {
   return res.json();
 }
 
+/** The address of a page of a document as an image (a source's document_id and page_number). */
+export function pageImageUrl(documentId: number, pageNumber: number): string {
+  return `/api/documents/${documentId}/pages/${pageNumber}`;
+}
+
 export async function getAuditLog(
   options: { limit?: number; offset?: number; event?: "chat" | "sync" } = {}
 ): Promise<AuditResponse> {

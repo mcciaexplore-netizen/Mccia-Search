@@ -29,7 +29,7 @@ _API_ERRORS = (genai_errors.APIError, httpx.HTTPError, OSError)
 _SEARCH_SQL = """
     SELECT
       c.id, c.content, c.page_number, c.chunk_index,
-      d.filename, d.drive_file_id,
+      d.filename, d.drive_file_id, c.document_id,
       1 - (c.embedding <=> %(query)s::vector) AS similarity
     FROM chunks c
     JOIN documents d ON d.id = c.document_id
@@ -81,7 +81,8 @@ def search(query: str, top_k: int = TOP_K) -> list[dict]:
     """Return the chunks most similar to the query, best first.
 
     Each result is {chunk_id, content, page_number, chunk_index, filename,
-    drive_file_id, similarity}, with cosine similarity of at least MIN_SIMILARITY.
+    drive_file_id, document_id, similarity}, with cosine similarity of at least
+    MIN_SIMILARITY.
     Returns an empty list when nothing is similar enough or the query is blank.
     """
     if top_k < 1:
@@ -103,6 +104,7 @@ def search(query: str, top_k: int = TOP_K) -> list[dict]:
                 "chunk_index": chunk_index,
                 "filename": filename,
                 "drive_file_id": drive_file_id,
+                "document_id": document_id,
                 "similarity": similarity,
             }
             for (
@@ -112,6 +114,7 @@ def search(query: str, top_k: int = TOP_K) -> list[dict]:
                 chunk_index,
                 filename,
                 drive_file_id,
+                document_id,
                 similarity,
             ) in rows
         ]

@@ -11,6 +11,7 @@ class ChatRequest(BaseModel):
 class SourceItem(BaseModel):
     filename: str
     page_number: int | None = None
+    document_id: int | None = None  # lets the client link to GET /documents/{id}/pages/{page}
     similarity: float
 
 
