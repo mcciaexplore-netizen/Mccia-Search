@@ -36,6 +36,9 @@ GOOGLE_SERVICE_ACCOUNT_FILE = _project_path(
     os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE") or "./credentials.json"
 )
 OCR_CACHE_DIR = _project_path(os.environ.get("OCR_CACHE_DIR") or "./staging/ocr_cache")
+# "gemini" (paid API, the default) or "tesseract" (free, runs on this machine). ingest.ocr
+# rejects any other value when OCR starts, so a typo cannot quietly fall back to the paid engine.
+OCR_ENGINE = (os.environ.get("OCR_ENGINE") or "").strip().lower() or "gemini"
 
 
 def validate_config() -> None:

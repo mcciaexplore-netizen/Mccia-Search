@@ -1,5 +1,6 @@
-"""OCR of PDF documents using Gemini."""
+"""OCR of PDF documents using Gemini, or Tesseract when OCR_ENGINE=tesseract."""
 
+import io
 import json
 import os
 import re
@@ -16,11 +17,12 @@ from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
 
-from config import GEMINI_API_KEY, GEMINI_OCR_MODEL, OCR_CACHE_DIR
+from config import GEMINI_API_KEY, GEMINI_OCR_MODEL, OCR_CACHE_DIR, OCR_ENGINE
 
 # Set GEMINI_OCR_MODEL in .env to switch models (gemini-2.0-flash was shut down
 # on 2026-06-01).
 OCR_MODEL = GEMINI_OCR_MODEL
+ENGINES = ("gemini", "tesseract")  # the values OCR_ENGINE accepts
 
 SYSTEM_PROMPT = (
     "You are an OCR engine. Extract ALL text from this scanned document page "
@@ -36,6 +38,8 @@ RETRY_DELAYS = (2, 4, 8)  # seconds before retry 1, 2 and 3
 REQUEST_TIMEOUT_MS = 120_000
 OCR_CONCURRENCY = max(1, int(os.environ.get("OCR_CONCURRENCY") or "4"))  # pages sent to Gemini at once
 PROGRESS_EVERY = 10  # print progress every this many pages
+TESSERACT_LANGS = "mar+hin+eng"  # Marathi, Hindi, English
+TESSERACT_TIMEOUT_SECONDS = 120  # a page that takes longer is killed and counts as failed
 
 DEVANAGARI_START, DEVANAGARI_END = "ऀ", "ॿ"
 LANGUAGE_SAMPLE_CHARS = 500
@@ -91,13 +95,18 @@ def pdf_to_images(pdf_data: bytes | Path) -> list[bytes]:
 
 
 def ocr_page(image_bytes: bytes, page_num: int) -> str:
-    """Extract the text of one page image with Gemini; "" if the page is blank.
+    """Extract the text of one page image; "" if the page is blank.
 
-    Transient errors (network, 408/429/5xx) are retried after 2s, 4s and 8s.
+    Uses Gemini, or Tesseract when OCR_ENGINE=tesseract. Gemini's transient errors
+    (network, 408/429/5xx) are retried after 2s, 4s and 8s.
     Raises OCRPageError if the page still fails or the error is not retryable.
     """
     if not image_bytes:
         raise OCRPageError(f"page {page_num}: no image data")
+    if OCR_ENGINE == "tesseract":
+        return _ocr_page_tesseract(image_bytes, page_num)
+    if OCR_ENGINE != "gemini":
+        raise _unknown_engine()
 
     client = _get_client()
     contents = [
@@ -202,7 +211,7 @@ def ocr_pdf(
                 )
 
     if missing:
-        _get_client()  # build the shared client once, before the workers start
+        _prepare_engine()  # fail fast, and build Gemini's shared client once, before the workers start
         with ThreadPoolExecutor(max_workers=min(OCR_CONCURRENCY, len(missing))) as pool:
             futures = [pool.submit(run_page, n) for n in missing]
             try:
@@ -273,6 +282,72 @@ def _get_client() -> genai.Client:
         api_key=GEMINI_API_KEY,
         http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS),
     )
+
+
+def _unknown_engine() -> RuntimeError:
+    return RuntimeError(
+        f"Unknown OCR_ENGINE {OCR_ENGINE!r}. Set it to one of: {', '.join(ENGINES)}."
+    )
+
+
+def _prepare_engine() -> None:
+    """Check, before any page is read, that the chosen engine can run."""
+    if OCR_ENGINE == "gemini":
+        _get_client()
+    elif OCR_ENGINE == "tesseract":
+        _check_tesseract()
+    else:
+        raise _unknown_engine()
+
+
+def _load_tesseract():
+    """The pytesseract module and PIL's Image; imported only when Tesseract is used,
+    so the Gemini engine keeps working on a machine that has not installed them."""
+    try:
+        import pytesseract
+        from PIL import Image
+    except ImportError as exc:
+        raise RuntimeError(
+            "OCR_ENGINE=tesseract needs the pytesseract package. Run `uv sync` in backend/."
+        ) from exc
+    return pytesseract, Image
+
+
+@lru_cache(maxsize=1)
+def _check_tesseract() -> None:
+    """Raise a RuntimeError saying what to install if Tesseract or a language is missing."""
+    pytesseract, _ = _load_tesseract()
+    try:
+        pytesseract.get_tesseract_version()
+    except pytesseract.TesseractNotFoundError as exc:
+        raise RuntimeError(
+            "OCR_ENGINE=tesseract but the tesseract program was not found. "
+            "Install it with: brew install tesseract tesseract-lang"
+        ) from exc
+    installed = set(pytesseract.get_languages(config=""))
+    missing = [lang for lang in TESSERACT_LANGS.split("+") if lang not in installed]
+    if missing:
+        raise RuntimeError(
+            f"Tesseract is missing language data for: {', '.join(missing)}. "
+            "Install it with: brew install tesseract-lang"
+        )
+
+
+def _ocr_page_tesseract(image_bytes: bytes, page_num: int) -> str:
+    """Extract the text of one page image with Tesseract; "" if the page is blank."""
+    # Tesseract does not fail on a missing language: it carries on with the ones it did
+    # load, giving poor text. So the check must run before any page, not rely on errors.
+    _check_tesseract()
+    pytesseract, Image = _load_tesseract()
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            text = pytesseract.image_to_string(
+                image, lang=TESSERACT_LANGS, timeout=TESSERACT_TIMEOUT_SECONDS
+            )
+    except (pytesseract.TesseractError, OSError, RuntimeError) as exc:
+        # OSError covers an unreadable image or a missing program; RuntimeError, a timeout.
+        raise OCRPageError(f"page {page_num}: Tesseract failed: {_brief(exc)}") from exc
+    return text.strip()
 
 
 def _is_retryable(exc: Exception) -> bool:
