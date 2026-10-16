@@ -13,7 +13,7 @@ from ingest.drive_sync import (
 )
 from ingest.ocr import get_or_ocr, detect_language
 from ingest.chunker import split_into_chunks
-from ingest.embedder import embed_and_store, update_document_status
+from ingest.embedder import embed_and_store, store_chunk_text, update_document_status
 
 # Finished downloads that may wait in the queue while OCR catches up. The queue is
 # bounded so a slow OCR cannot let the downloader fill memory with PDFs: at most
@@ -47,8 +47,12 @@ def _update_document(conn, doc_id: int, total_pages: int, language: str) -> None
     )
 
 
-def ingest_one(pdf_data: bytes, drive_file_id: str, filename: str) -> str:
-    """Ingest one PDF; returns "ingested", "skipped" or "failed"."""
+def ingest_one(pdf_data: bytes, drive_file_id: str, filename: str, embed: bool = True) -> str:
+    """Ingest one PDF; returns "ingested", "text_saved", "skipped" or "failed".
+
+    With embed=False the text is saved without embeddings and the document is marked
+    "text_saved": no Gemini call is made. ingest.embed_pending embeds it later.
+    """
     doc_id = None
     try:
         with get_connection() as conn:
@@ -82,6 +86,11 @@ def ingest_one(pdf_data: bytes, drive_file_id: str, filename: str) -> str:
             conn.commit()
 
         chunks = split_into_chunks(pages, doc_id, filename)
+        if not embed:
+            stored = store_chunk_text(chunks)
+            update_document_status(doc_id, "text_saved")
+            print(f"[pipeline] {filename} — text saved ({stored} chunks), embeddings still to do")
+            return "text_saved"
         stored = embed_and_store(chunks)
         update_document_status(doc_id, "completed")
 

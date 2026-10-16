@@ -213,13 +213,15 @@ def stream_pdf(
 def get_completed_drive_ids() -> set[str]:
     """Drive file IDs of every document already fully ingested.
 
+    That includes a document whose text is saved and only waits for its embeddings
+    (status 'text_saved'): there is nothing more to download or OCR for it.
     Returns an empty set if the database cannot be reached, so the caller streams
     every file instead of failing.
     """
     try:
         with get_connection() as conn:
             rows = conn.execute(
-                "SELECT drive_file_id FROM documents WHERE status = 'completed'"
+                "SELECT drive_file_id FROM documents WHERE status IN ('completed', 'text_saved')"
             ).fetchall()
     except Exception as exc:
         # Only the error type is printed: a malformed DATABASE_URL can end up in the message.

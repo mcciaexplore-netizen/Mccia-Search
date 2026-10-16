@@ -30,6 +30,8 @@ const STATUS_BADGE: Record<string, { label: string; className: string }> = {
   failed: { label: "Failed", className: "bg-accent/15 text-ink" },
   processing: { label: "In progress", className: "bg-sky-100 text-sky-800" },
   pending: { label: "In progress", className: "bg-sky-100 text-sky-800" },
+  // The text is saved but not yet embedded, so search cannot find it.
+  text_saved: { label: "Waiting for embeddings", className: "bg-sky-100 text-sky-800" },
 };
 
 // Make sure the payload really is a document list before showing it.
@@ -105,7 +107,7 @@ export default function KnowledgeBase() {
   const rows = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return (data?.documents ?? []).filter((d) => {
-      const group = d.status === "processing" ? "pending" : d.status;
+      const group = d.status === "processing" || d.status === "text_saved" ? "pending" : d.status;
       return (filter === "all" || group === filter) && (!needle || d.filename.toLowerCase().includes(needle));
     });
   }, [data, filter, search]);

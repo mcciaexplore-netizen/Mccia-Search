@@ -151,7 +151,7 @@ def ingest_status():
               COUNT(*) AS total,
               COUNT(*) FILTER (WHERE status = 'completed') AS completed,
               COUNT(*) FILTER (WHERE status = 'failed') AS failed,
-              COUNT(*) FILTER (WHERE status IN ('pending','processing')) AS pending
+              COUNT(*) FILTER (WHERE status IN ('pending','processing','text_saved')) AS pending
             FROM documents
             """
         ).fetchone()
@@ -184,7 +184,7 @@ def documents():
             "total": len(items),
             "completed": sum(d["status"] == "completed" for d in items),
             "failed": sum(d["status"] == "failed" for d in items),
-            "pending": sum(d["status"] in ("pending", "processing") for d in items),
+            "pending": sum(d["status"] in ("pending", "processing", "text_saved") for d in items),
             "chunks": sum(d["chunks"] for d in items),
         },
         "documents": items,

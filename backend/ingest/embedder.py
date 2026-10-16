@@ -25,13 +25,20 @@ TASK_TYPE = "RETRIEVAL_DOCUMENT"
 RETRY_DELAYS = (2, 4, 8)  # seconds before retry 1, 2 and 3
 REQUEST_TIMEOUT_MS = 120_000
 
-VALID_STATUSES = ("pending", "processing", "completed", "failed")
+# "text_saved": the text is stored without embeddings, which ingest.embed_pending adds later.
+VALID_STATUSES = ("pending", "processing", "text_saved", "completed", "failed")
 
 _API_ERRORS = (genai_errors.APIError, httpx.HTTPError, OSError)
 
 _INSERT_CHUNK = """
     INSERT INTO chunks (document_id, chunk_index, content, page_number, embedding)
     VALUES (%s, %s, %s, %s, %s::vector)
+    ON CONFLICT (document_id, chunk_index) DO NOTHING
+"""
+
+_INSERT_CHUNK_TEXT = """
+    INSERT INTO chunks (document_id, chunk_index, content, page_number)
+    VALUES (%s, %s, %s, %s)
     ON CONFLICT (document_id, chunk_index) DO NOTHING
 """
 
@@ -94,6 +101,27 @@ def store_chunks(chunks: list[dict], embeddings: list[list[float]]) -> int:
                 inserted = cur.rowcount
 
     print(f"[embed] stored {inserted} chunks in database")
+    return inserted
+
+
+def store_chunk_text(chunks: list[dict]) -> int:
+    """Insert chunks without embeddings (the vector stays NULL) in a single transaction.
+
+    No embedding model is called, so this costs nothing. ingest.embed_pending fills in the
+    vectors later; search skips chunks that have none. Rows whose (document_id,
+    chunk_index) already exist are skipped. Returns the number of rows inserted.
+    """
+    inserted = 0
+    if chunks:
+        rows = [
+            (chunk["document_id"], chunk["chunk_index"], chunk["content"], chunk["page_number"])
+            for chunk in chunks
+        ]
+        with get_connection() as conn, conn.transaction():
+            with conn.cursor() as cur:
+                cur.executemany(_INSERT_CHUNK_TEXT, rows)
+                inserted = cur.rowcount
+    print(f"[embed] stored the text of {inserted} chunks, without embeddings")
     return inserted
 
 
