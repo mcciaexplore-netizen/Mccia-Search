@@ -60,8 +60,9 @@ export default function PagePanel({ sources, selectedKey, onSelect, onClose }: P
       </ul>
 
       <div className="flex items-center gap-2 px-4 py-2.5">
-        <p className="min-w-0 flex-1 truncate text-sm font-medium text-primary" title={`${selected.filename}, page ${selected.page_number}`}>
-          {selected.filename} <span className="font-normal text-muted">· page {selected.page_number}</span>
+        <p className="flex min-w-0 flex-1 items-baseline gap-1.5 text-sm text-primary" title={`${selected.filename}, page ${selected.page_number}`}>
+          <span className="shrink-0 font-semibold">Page {selected.page_number}</span>
+          <span className="min-w-0 truncate text-muted">{selected.filename}</span>
         </p>
         <a
           href={pageImageUrl(selected.document_id, selected.page_number)}

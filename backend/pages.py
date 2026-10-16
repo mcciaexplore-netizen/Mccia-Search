@@ -214,6 +214,7 @@ def _fetch_page(drive_file_id: str, filename: str, page_number: int) -> tuple[by
     except PageNotFound:
         raise
     except Exception as exc:
+        _forget_remote(drive_file_id)
         drive_error = remote.drive_error if remote is not None else exc
         if remote is None or drive_error is not None:
             _raise_unavailable(filename, drive_error or exc)
