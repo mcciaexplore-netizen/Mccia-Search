@@ -1,6 +1,5 @@
 import ReactMarkdown from "react-markdown";
 import type { Message } from "@/lib/types";
-import SourceList from "./SourceList";
 
 function formatTime(date: Date): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -22,8 +21,6 @@ export default function MessageBubble({ message }: { message: Message }) {
     );
   }
 
-  const showSources = message.found === true && (message.sources?.length ?? 0) > 0;
-
   return (
     <div className="flex flex-col items-start">
       <div className="max-w-3xl rounded-2xl bg-surface px-5 py-4 text-primary shadow-sm ring-1 ring-black/5">
@@ -37,7 +34,6 @@ export default function MessageBubble({ message }: { message: Message }) {
             No results found
           </span>
         )}
-        {showSources && <SourceList sources={message.sources ?? []} messageId={message.id} />}
       </div>
       {time}
     </div>

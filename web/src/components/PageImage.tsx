@@ -12,8 +12,8 @@ interface PageImageProps {
 type Status = "loading" | "ready" | "error";
 
 /**
- * One scanned page as an image, with its loading and failure states. It is shared by the
- * pop-up (PageViewer) and the page panel. Give it a new `key` to show another page.
+ * One scanned page as an image, with its loading and failure states. Give it a new `key`
+ * to show another page.
  */
 export default function PageImage({ filename, documentId, pageNumber }: PageImageProps) {
   const [status, setStatus] = useState<Status>("loading");

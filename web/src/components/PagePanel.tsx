@@ -6,6 +6,8 @@ import type { ViewableSource } from "@/lib/sources";
 import PageImage from "./PageImage";
 
 interface PagePanelProps {
+  /** "sidebar" sits beside the chat on a wide window; "drawer" slides over it on a narrow one. */
+  layout: "sidebar" | "drawer";
   /** The pages cited by one answer, best match first. */
   sources: ViewableSource[];
   selectedKey: string;
@@ -13,20 +15,28 @@ interface PagePanelProps {
   onClose: () => void;
 }
 
-/** A sidebar on the right showing the scanned pages an answer was taken from. */
-export default function PagePanel({ sources, selectedKey, onSelect, onClose }: PagePanelProps) {
+const LAYOUT_CLASSES = {
+  sidebar: "fixed inset-y-0 right-0 z-20 flex w-[26rem] flex-col border-l border-black/10 bg-surface",
+  drawer: "fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col bg-surface shadow-xl",
+};
+
+/** The scanned pages an answer was taken from, with a list to switch between them. */
+export default function PagePanel({ layout, sources, selectedKey, onSelect, onClose }: PagePanelProps) {
   const selected = sources.find((source) => sourceKey(source) === selectedKey) ?? sources[0];
 
   return (
     <aside
       aria-label="Scanned pages"
-      className="fixed inset-y-0 right-0 z-20 hidden w-[26rem] flex-col border-l border-black/10 bg-surface xl:flex"
+      role={layout === "drawer" ? "dialog" : undefined}
+      aria-modal={layout === "drawer" ? true : undefined}
+      className={LAYOUT_CLASSES[layout]}
     >
       <div className="flex items-center gap-2 border-b border-black/5 px-4 py-3">
         <h2 className="min-w-0 flex-1 text-base font-semibold text-primary">Scanned pages</h2>
         <button
           type="button"
           onClick={onClose}
+          autoFocus={layout === "drawer"}
           aria-label="Close page panel"
           className="shrink-0 rounded-lg p-1.5 text-primary transition hover:bg-primary/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         >
