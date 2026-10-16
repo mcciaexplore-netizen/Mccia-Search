@@ -18,7 +18,7 @@ interface PagePanelProps {
 }
 
 const LAYOUT_CLASSES = {
-  sidebar: "fixed inset-y-0 right-0 z-20 flex w-[26rem] flex-col border-l border-black/10 bg-surface",
+  sidebar: "fixed inset-y-0 right-0 z-20 flex w-[22rem] flex-col border-l border-black/10 bg-surface xl:w-[26rem]",
   drawer: "fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col bg-surface shadow-xl",
 };
 

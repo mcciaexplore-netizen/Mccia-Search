@@ -14,9 +14,12 @@ import { useMediaQuery } from "@/lib/useMediaQuery";
 
 type View = "chat" | "settings";
 
-// The page panel sits beside the chat from this width up. On a narrower window there is no
-// room for it, so it slides over the chat instead, opened with the "Scanned pages" button.
-const WIDE_WINDOW = "(min-width: 1280px)";
+// The page panel sits beside the chat from this width up (slimmer below 1280px). On a
+// narrower window there is no room for it, so it slides over the chat instead: by itself when
+// an answer arrives, from this width up (where the answer stays in view), and otherwise with
+// the "Scanned pages" button.
+const WIDE_WINDOW = "(min-width: 1024px)";
+const MEDIUM_WINDOW = "(min-width: 768px)";
 
 // crypto.randomUUID() only exists in secure contexts, and this app may be served
 // over plain HTTP on the office network.
@@ -30,6 +33,7 @@ export default function ChatShell() {
   const [view, setView] = useState<View>("chat");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const wide = useMediaQuery(WIDE_WINDOW);
+  const medium = useMediaQuery(MEDIUM_WINDOW);
   // The page the user picked, the answer whose sidebar the user closed, and the slide-over's state.
   const [pin, setPin] = useState<PanelPin | null>(null);
   const [closedFor, setClosedFor] = useState<string | null>(null);
@@ -122,6 +126,12 @@ export default function ChatShell() {
   useEffect(() => {
     if (wide) setDrawerOpen(false);
   }, [wide]);
+
+  // On a medium window the pages slide in by themselves when an answer arrives (after the
+  // reset above), so the images are seen without having to find the button.
+  useEffect(() => {
+    if (newestAnswerId && medium && !wide) setDrawerOpen(true);
+  }, [activeId, newestAnswerId, medium, wide]);
 
   // Escape closes the slide-over.
   useEffect(() => {
@@ -231,7 +241,7 @@ export default function ChatShell() {
         </button>
       )}
 
-      <main className={`flex h-dvh flex-col md:pl-72 ${sidebarShown ? "xl:pr-[26rem]" : ""}`}>
+      <main className={`flex h-dvh flex-col md:pl-72 ${sidebarShown ? "lg:pr-[22rem] xl:pr-[26rem]" : ""}`}>
         <header className="flex items-center gap-3 bg-primary px-4 py-3 text-white md:hidden">
           <button
             type="button"
