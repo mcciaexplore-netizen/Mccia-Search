@@ -41,7 +41,7 @@ PROGRESS_EVERY = 10  # print progress every this many pages
 TESSERACT_LANGS = "mar+hin+eng"  # Marathi, Hindi, English
 TESSERACT_TIMEOUT_SECONDS = 120  # a page that takes longer is killed and counts as failed
 EASYOCR_LANGS = ["mr", "hi", "en"]  # Marathi, Hindi, English
-PADDLE_LANG = "devanagari"  # Paddle's one model for Marathi and Hindi; it reads Latin letters too
+PADDLE_LANG = "mr"  # Marathi: Paddle gives every Devanagari language, Hindi too, its one Devanagari model
 
 DEVANAGARI_START, DEVANAGARI_END = "ऀ", "ॿ"
 LANGUAGE_SAMPLE_CHARS = 500

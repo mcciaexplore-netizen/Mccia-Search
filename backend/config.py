@@ -42,6 +42,15 @@ OCR_CACHE_DIR = _project_path(os.environ.get("OCR_CACHE_DIR") or "./staging/ocr_
 OCR_ENGINE = (os.environ.get("OCR_ENGINE") or "").strip().lower() or "gemini"
 # Where the "View page" images are kept once rendered (pages.py trims it to a size limit).
 PAGE_CACHE_DIR = _project_path(os.environ.get("PAGE_CACHE_DIR") or "./staging/page_cache")
+# "gemini" (the default) or "local": which model makes the embeddings. Vectors from different
+# models cannot be compared, so changing it means re-embedding every stored chunk
+# (uv run python -m ingest.reembed); embedding_engine.py refuses to mix them.
+EMBEDDING_ENGINE = (os.environ.get("EMBEDDING_ENGINE") or "").strip().lower() or "gemini"
+# The sentence-transformers model used when EMBEDDING_ENGINE=local. It must make 768-dimension
+# vectors, because the database column is vector(768).
+LOCAL_EMBEDDING_MODEL = (
+    os.environ.get("LOCAL_EMBEDDING_MODEL") or ""
+).strip() or "paraphrase-multilingual-mpnet-base-v2"
 
 
 def validate_config() -> None:

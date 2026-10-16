@@ -18,6 +18,7 @@ import time
 from pgvector import Vector
 
 from db.connection import get_connection, init_db
+from embedding_engine import ensure_matches_database
 from ingest.embedder import embed_texts
 
 BATCH_SIZE = 5  # chunks per embedding request
@@ -41,6 +42,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--delay cannot be negative")
 
     init_db()  # makes sure chunks.embedding may be empty, however this database was made
+    ensure_matches_database()  # new vectors must come from the model behind the stored ones
 
     with get_connection() as conn:
         todo = _count_missing(conn)

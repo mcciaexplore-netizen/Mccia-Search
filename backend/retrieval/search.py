@@ -14,6 +14,7 @@ from psycopg_pool import PoolTimeout
 
 from config import GEMINI_API_KEY, GEMINI_EMBEDDING_MODEL
 from db.connection import get_pooled_connection
+from embedding_engine import embed_local, engine, ensure_matches_database
 
 TOP_K = 8  # number of chunks to return
 MIN_SIMILARITY = 0.25  # discard chunks below this score
@@ -43,8 +44,11 @@ def embed_query(query: str) -> list[float]:
     """Embed a search query as a retrieval query; returns a 768-float unit vector.
 
     Transient errors are retried after 2s, 4s and 8s; a RuntimeError is raised if
-    the query still cannot be embedded.
+    the query still cannot be embedded. With EMBEDDING_ENGINE=local it is embedded on
+    this machine instead.
     """
+    if engine() == "local":
+        return embed_local([query])[0]
     client = _get_client()
     config = types.EmbedContentConfig(
         task_type=TASK_TYPE, output_dimensionality=EMBEDDING_DIMENSION
@@ -90,6 +94,7 @@ def search(query: str, top_k: int = TOP_K) -> list[dict]:
 
     results: list[dict] = []
     if query.strip():
+        ensure_matches_database()  # the query must come from the model behind the stored vectors
         params = {
             "query": Vector(embed_query(query)).to_text(),
             "min_similarity": MIN_SIMILARITY,

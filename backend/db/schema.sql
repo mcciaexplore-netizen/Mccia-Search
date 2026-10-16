@@ -47,6 +47,13 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS audit_log_occurred_at_idx
   ON audit_log (occurred_at DESC);
 
+-- Which model made the vectors in chunks. Vectors from different models cannot be compared, so
+-- the app records the model here and refuses to mix them (see embedding_engine.py).
+CREATE TABLE IF NOT EXISTS embedding_meta (
+  id    BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),  -- always TRUE: this table has one row
+  model TEXT NOT NULL
+);
+
 -- A chunk may be saved before it is embedded (ingest.parallel_ingest saves text only, and
 -- ingest.embed_pending adds the vectors later). Search skips chunks that have no vector.
 -- Checked first, so a startup does not lock the table when there is nothing to change.

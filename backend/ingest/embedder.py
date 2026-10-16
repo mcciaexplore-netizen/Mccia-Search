@@ -12,6 +12,7 @@ from pgvector import Vector
 
 from config import GEMINI_API_KEY, GEMINI_EMBEDDING_MODEL
 from db.connection import get_connection
+from embedding_engine import embed_local, engine, ensure_matches_database
 
 # text-embedding-004 was shut down on 2026-01-14. gemini-embedding-001 is its
 # API-compatible successor and keeps task_type; Google's newer gemini-embedding-2
@@ -47,10 +48,14 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     """Embed texts as retrieval documents; returns one 768-float vector per text.
 
     Texts go to Gemini BATCH_SIZE at a time. Transient errors are retried after
-    2s, 4s and 8s; a RuntimeError is raised if a batch still fails.
+    2s, 4s and 8s; a RuntimeError is raised if a batch still fails. With
+    EMBEDDING_ENGINE=local they are embedded on this machine instead.
     """
     if not texts:
         return []
+    if engine() == "local":
+        print(f"[embed] {len(texts)} chunks with the local model")
+        return embed_local(texts)
 
     client = _get_client()
     config = types.EmbedContentConfig(
@@ -127,6 +132,7 @@ def store_chunk_text(chunks: list[dict]) -> int:
 
 def embed_and_store(chunks: list[dict]) -> int:
     """Embed the chunks' text and store everything; returns the rows inserted."""
+    ensure_matches_database()  # new vectors must come from the model behind the stored ones
     embeddings = embed_texts([chunk["content"] for chunk in chunks])
     return store_chunks(chunks, embeddings)
 

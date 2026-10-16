@@ -28,3 +28,6 @@ paddle = [
     "paddleocr>=3.7.0",
     "paddlepaddle>=3.3.1",
 ]
+local-embeddings = [
+    "sentence-transformers>=6.1.0",
+]
