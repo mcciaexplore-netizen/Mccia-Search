@@ -15,12 +15,17 @@ from psycopg_pool import PoolTimeout
 
 from config import GEMINI_API_KEY, GEMINI_EMBEDDING_MODEL
 from db.connection import get_pooled_connection
-from embedding_engine import embed_local, engine, ensure_matches_database
+from embedding_engine import (
+    GEMINI_DIMENSION,
+    embed_local,
+    ensure_matches_database,
+    min_similarity,
+    uses_local_model,
+)
 
 TOP_K = 5  # number of chunks to return
-MIN_SIMILARITY = 0.50  # discard chunks below this score
 EMBEDDING_MODEL = GEMINI_EMBEDDING_MODEL  # the same setting ingest/embedder.py uses
-EMBEDDING_DIMENSION = 768
+EMBEDDING_DIMENSION = GEMINI_DIMENSION  # what Gemini is asked for; bge-m3 makes 1024, see dimension()
 TASK_TYPE = "RETRIEVAL_QUERY"  # documents are embedded as RETRIEVAL_DOCUMENT
 
 RETRY_DELAYS = (2, 4, 8)  # seconds before retry 1, 2 and 3
@@ -66,13 +71,13 @@ _LATIN_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
 
 
 def embed_query(query: str) -> list[float]:
-    """Embed a search query as a retrieval query; returns a 768-float unit vector.
+    """Embed a search query as a retrieval query; returns a unit vector (dimension() floats).
 
     Transient errors are retried after 2s, 4s and 8s; a RuntimeError is raised if
-    the query still cannot be embedded. With EMBEDDING_ENGINE=local it is embedded on
-    this machine instead.
+    the query still cannot be embedded. With EMBEDDING_ENGINE=local or bge it is embedded
+    on this machine instead.
     """
-    if engine() == "local":
+    if uses_local_model():
         return embed_local([query])[0]
     client = _get_client()
     config = types.EmbedContentConfig(
@@ -138,9 +143,9 @@ def search(query: str, top_k: int = TOP_K) -> list[dict]:
     """Return the chunks most similar to the query, best first.
 
     Each result is {chunk_id, content, page_number, chunk_index, filename,
-    drive_file_id, document_id, similarity}, with cosine similarity of at least
-    MIN_SIMILARITY. When the query names a year (such as 1965), only chunks of the issues
-    that cover that year are searched.
+    drive_file_id, document_id, similarity}, with cosine similarity of at least the
+    engine's min_similarity() (0.50 for Gemini, 0.40 for bge-m3). When the query names a
+    year (such as 1965), only chunks of the issues that cover that year are searched.
     Returns an empty list when nothing is similar enough, no issue covers the year, or the
     query is blank.
     """
@@ -158,7 +163,7 @@ def search(query: str, top_k: int = TOP_K) -> list[dict]:
         if document_ids != []:  # a year that no issue covers has nothing to search
             params = {
                 "query": Vector(embed_query(query)).to_text(),
-                "min_similarity": MIN_SIMILARITY,
+                "min_similarity": min_similarity(),  # per engine: each model scores differently
                 "top_k": top_k,
             }
             if document_ids is not None:

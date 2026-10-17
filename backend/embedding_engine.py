@@ -1,5 +1,8 @@
 """Which model makes the embeddings: Gemini (the default) or a model on this machine.
 
+The engines (EMBEDDING_ENGINE): "gemini" (768 dimensions), "local" (LOCAL_EMBEDDING_MODEL,
+768) and "bge" (BAAI/bge-m3, 1024). The last two run on this machine, free and offline.
+
 Vectors from different models cannot be compared with each other, even when they have the
 same length. So the whole database must be embedded by one model, and questions must be
 embedded by that same model. The database records which model that is (embedding_meta), and
@@ -12,9 +15,18 @@ from functools import lru_cache
 from config import EMBEDDING_ENGINE, GEMINI_EMBEDDING_MODEL, LOCAL_EMBEDDING_MODEL
 from db.connection import get_connection
 
-ENGINES = ("gemini", "local")  # the values EMBEDDING_ENGINE accepts
-EMBEDDING_DIMENSION = 768  # the width of chunks.embedding in the database
-LOCAL_BATCH_SIZE = 16  # texts the local model reads at once
+ENGINES = ("gemini", "local", "bge")  # the values EMBEDDING_ENGINE accepts
+LOCAL_ENGINES = ("local", "bge")  # the engines that run a model on this machine
+BGE_MODEL = "BAAI/bge-m3"
+# The width of the vectors each engine makes, which chunks.embedding in the database must match.
+DIMENSIONS = {"gemini": 768, "local": 768, "bge": 1024}
+GEMINI_DIMENSION = DIMENSIONS["gemini"]
+BATCH_SIZES = {"local": 16, "bge": 8}  # texts a local model reads at once
+# The lowest cosine similarity at which a chunk still counts as a match. Each model spreads its
+# scores differently. Measured on 30 real questions: Gemini scores run higher, bge-m3 puts the
+# right chunk at a median 0.55 (0.41 at worst) and unrelated chunks around 0.35 (0.45 at the 95th
+# percentile), so 0.50 would drop 4 of those 30 right chunks and 0.40 drops none.
+MIN_SIMILARITIES = {"gemini": 0.50, "local": 0.50, "bge": 0.40}
 
 _checked = False
 _check_lock = threading.Lock()
@@ -33,22 +45,40 @@ def engine() -> str:
     return EMBEDDING_ENGINE
 
 
+def dimension() -> int:
+    """The width of the vectors the engine in use makes."""
+    return DIMENSIONS[engine()]
+
+
+def min_similarity() -> float:
+    """The lowest similarity that counts as a match for the engine in use."""
+    return MIN_SIMILARITIES[engine()]
+
+
+def uses_local_model() -> bool:
+    """Whether the engine in use embeds on this machine instead of calling Gemini."""
+    return engine() in LOCAL_ENGINES
+
+
 def model_id() -> str:
     """Names the model behind this process's vectors, e.g. "gemini:gemini-embedding-001"."""
+    if engine() == "bge":
+        return f"bge:{BGE_MODEL}"
     if engine() == "local":
         return f"local:{LOCAL_EMBEDDING_MODEL}"
     return f"gemini:{GEMINI_EMBEDDING_MODEL}"
 
 
 def embed_local(texts: list[str]) -> list[list[float]]:
-    """Embed texts with the local model; returns one unit-length 768-float vector per text."""
+    """Embed texts with the local model; returns one unit-length vector per text (dimension())."""
     if not texts:
         return []
-    model = _local_model()
+    name = engine()
+    model = _local_model(name)
     try:
         vectors = model.encode(
             texts,
-            batch_size=LOCAL_BATCH_SIZE,
+            batch_size=BATCH_SIZES[name],
             normalize_embeddings=True,
             convert_to_numpy=True,
             show_progress_bar=False,
@@ -90,8 +120,8 @@ def ensure_matches_database() -> None:
             raise EmbeddingModelMismatch(
                 f"The database's vectors were made by {recorded!r}, but this process embeds with "
                 f"{current!r}. Vectors from different models cannot be compared. Set "
-                "EMBEDDING_ENGINE back, or re-embed everything with the new model: "
-                "uv run python -m ingest.reembed"
+                "EMBEDDING_ENGINE back, or re-embed everything with the new model "
+                "(uv run python -m ingest.reembed_all for bge, ingest.reembed for the others)."
             )
         _checked = True
 
@@ -109,23 +139,24 @@ def record_model(conn) -> None:
     )
 
 
-@lru_cache(maxsize=1)
-def _local_model():
-    """The sentence-transformers model, loaded once; the first time, it is downloaded."""
+@lru_cache(maxsize=2)
+def _local_model(name: str):
+    """The sentence-transformers model of a local engine, loaded once; the first time, downloaded."""
     try:
         from sentence_transformers import SentenceTransformer
     except ImportError as exc:
         raise RuntimeError(
-            "EMBEDDING_ENGINE=local needs the sentence-transformers package. "
-            "Run `uv sync --extra local-embeddings` in backend/."
+            f"EMBEDDING_ENGINE={name} needs the sentence-transformers package. "
+            "Run `uv sync` in backend/."
         ) from exc
-    print(f"[embed] loading the local model {LOCAL_EMBEDDING_MODEL}...")
-    model = SentenceTransformer(LOCAL_EMBEDDING_MODEL, device="cpu")
-    dimension = model.get_sentence_embedding_dimension()
-    if dimension != EMBEDDING_DIMENSION:
+    model_name = BGE_MODEL if name == "bge" else LOCAL_EMBEDDING_MODEL
+    print(f"[embed] loading the local model {model_name}...")
+    # bge-m3 picks the fastest device itself (a GPU, Apple's MPS, or the CPU); "local" stays on the CPU.
+    model = SentenceTransformer(model_name, **({} if name == "bge" else {"device": "cpu"}))
+    found = model.get_embedding_dimension()
+    if found != DIMENSIONS[name]:
         raise RuntimeError(
-            f"{LOCAL_EMBEDDING_MODEL} makes {dimension}-dimension vectors, but the database "
-            f"stores {EMBEDDING_DIMENSION}. Use a {EMBEDDING_DIMENSION}-dimension model, such "
-            "as paraphrase-multilingual-mpnet-base-v2."
+            f"{model_name} makes {found}-dimension vectors, but the database stores "
+            f"{DIMENSIONS[name]} for EMBEDDING_ENGINE={name}. Use a {DIMENSIONS[name]}-dimension model."
         )
     return model

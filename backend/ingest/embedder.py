@@ -12,15 +12,22 @@ from pgvector import Vector
 
 from config import GEMINI_API_KEY, GEMINI_EMBEDDING_MODEL
 from db.connection import get_connection
-from embedding_engine import embed_local, engine, ensure_matches_database
+from embedding_engine import (
+    GEMINI_DIMENSION,
+    dimension,
+    embed_local,
+    engine,
+    ensure_matches_database,
+    uses_local_model,
+)
 
 # text-embedding-004 was shut down on 2026-01-14. gemini-embedding-001 is its
 # API-compatible successor and keeps task_type; Google's newer gemini-embedding-2
 # has no task_type and needs different prompts. Set GEMINI_EMBEDDING_MODEL in .env
 # to switch; stored chunks must then be re-embedded with the same model.
 EMBEDDING_MODEL = GEMINI_EMBEDDING_MODEL
-EMBEDDING_DIMENSION = 768
-BATCH_SIZE = 20  # chunks to embed per API call
+EMBEDDING_DIMENSION = GEMINI_DIMENSION  # what Gemini is asked for; the local engines differ, see dimension()
+BATCH_SIZE = 20  # chunks to embed per API call  (the local engines use embedding_engine.BATCH_SIZES)
 TASK_TYPE = "RETRIEVAL_DOCUMENT"
 
 RETRY_DELAYS = (2, 4, 8)  # seconds before retry 1, 2 and 3
@@ -45,16 +52,16 @@ _INSERT_CHUNK_TEXT = """
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
-    """Embed texts as retrieval documents; returns one 768-float vector per text.
+    """Embed texts as retrieval documents; returns one vector per text (dimension() floats).
 
     Texts go to Gemini BATCH_SIZE at a time. Transient errors are retried after
     2s, 4s and 8s; a RuntimeError is raised if a batch still fails. With
-    EMBEDDING_ENGINE=local they are embedded on this machine instead.
+    EMBEDDING_ENGINE=local or bge they are embedded on this machine instead.
     """
     if not texts:
         return []
-    if engine() == "local":
-        print(f"[embed] {len(texts)} chunks with the local model")
+    if uses_local_model():
+        print(f"[embed] {len(texts)} chunks with the {engine()} model")
         return embed_local(texts)
 
     client = _get_client()
@@ -81,11 +88,12 @@ def store_chunks(chunks: list[dict], embeddings: list[list[float]]) -> int:
         raise ValueError(
             f"Got {len(chunks)} chunks but {len(embeddings)} embeddings; they must match"
         )
+    expected = dimension()
     for index, embedding in enumerate(embeddings):
-        if len(embedding) != EMBEDDING_DIMENSION:
+        if len(embedding) != expected:
             raise ValueError(
                 f"Embedding {index} has {len(embedding)} values, "
-                f"expected {EMBEDDING_DIMENSION}"
+                f"expected {expected}"
             )
 
     inserted = 0

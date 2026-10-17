@@ -42,9 +42,10 @@ OCR_CACHE_DIR = _project_path(os.environ.get("OCR_CACHE_DIR") or "./staging/ocr_
 OCR_ENGINE = (os.environ.get("OCR_ENGINE") or "").strip().lower() or "gemini"
 # Where the "View page" images are kept once rendered (pages.py trims it to a size limit).
 PAGE_CACHE_DIR = _project_path(os.environ.get("PAGE_CACHE_DIR") or "./staging/page_cache")
-# "gemini" (the default) or "local": which model makes the embeddings. Vectors from different
+# "gemini" (the default), "local" (LOCAL_EMBEDDING_MODEL, 768 dimensions) or "bge" (BAAI/bge-m3,
+# 1024 dimensions, runs on this machine): which model makes the embeddings. Vectors from different
 # models cannot be compared, so changing it means re-embedding every stored chunk
-# (uv run python -m ingest.reembed); embedding_engine.py refuses to mix them.
+# (uv run python -m ingest.reembed_all for bge); embedding_engine.py refuses to mix them.
 EMBEDDING_ENGINE = (os.environ.get("EMBEDDING_ENGINE") or "").strip().lower() or "gemini"
 # The sentence-transformers model used when EMBEDDING_ENGINE=local. It must make 768-dimension
 # vectors, because the database column is vector(768).

@@ -10,12 +10,14 @@ CREATE TABLE IF NOT EXISTS documents (
   status        TEXT DEFAULT 'pending'
 );
 
+-- An existing database keeps the width it has: CREATE TABLE IF NOT EXISTS does not alter a table.
+-- ingest.reembed_all changes it to 1024 and re-embeds every chunk with bge-m3.
 CREATE TABLE IF NOT EXISTS chunks (
   id          BIGSERIAL PRIMARY KEY,
   document_id BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
   chunk_index INTEGER NOT NULL,
   content     TEXT NOT NULL,
-  embedding   vector(768) NOT NULL,
+  embedding   vector(1024) NOT NULL,  -- BAAI/bge-m3 (EMBEDDING_ENGINE=bge); gemini and local make 768
   page_number INTEGER,
   created_at  TIMESTAMPTZ DEFAULT now(),
   UNIQUE (document_id, chunk_index)

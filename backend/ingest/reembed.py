@@ -1,7 +1,8 @@
 """Re-embed every stored chunk with the model this process is set up for.
 
 Needed once when EMBEDDING_ENGINE (or LOCAL_EMBEDDING_MODEL) changes: vectors from different
-models cannot be compared, so the database must be embedded by a single model.
+models cannot be compared, so the database must be embedded by a single model. It only works
+between models of the same width (768 dimensions); for bge-m3 (1024) use ingest.reembed_all.
 
     uv run python -m ingest.reembed          # shows the plan and changes nothing
     uv run python -m ingest.reembed --yes    # does it
@@ -31,6 +32,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.batch_size < 1:
         parser.error("--batch-size must be at least 1")
+
+    if embedding_engine.dimension() != 768:
+        print(
+            f"EMBEDDING_ENGINE={embedding_engine.engine()} makes {embedding_engine.dimension()}-dimension "
+            "vectors, which do not fit the 768-dimension column. Use: uv run python -m ingest.reembed_all"
+        )
+        return 2
 
     current = embedding_engine.model_id()
     with get_connection() as conn:
