@@ -1,6 +1,7 @@
 """pgvector similarity search for relevant chunks."""
 
 import math
+import re
 import time
 from functools import lru_cache
 
@@ -16,8 +17,8 @@ from config import GEMINI_API_KEY, GEMINI_EMBEDDING_MODEL
 from db.connection import get_pooled_connection
 from embedding_engine import embed_local, engine, ensure_matches_database
 
-TOP_K = 8  # number of chunks to return
-MIN_SIMILARITY = 0.25  # discard chunks below this score
+TOP_K = 5  # number of chunks to return
+MIN_SIMILARITY = 0.50  # discard chunks below this score
 EMBEDDING_MODEL = GEMINI_EMBEDDING_MODEL  # the same setting ingest/embedder.py uses
 EMBEDDING_DIMENSION = 768
 TASK_TYPE = "RETRIEVAL_QUERY"  # documents are embedded as RETRIEVAL_DOCUMENT
@@ -38,6 +39,30 @@ _SEARCH_SQL = """
     ORDER BY c.embedding <=> %(query)s::vector
     LIMIT %(top_k)s
 """
+
+# The same search over the chunks of some documents only. The approximate (HNSW) index finds
+# its nearest chunks across the whole archive and only then drops those outside the documents,
+# which can leave too few; the MATERIALIZED pool is an exact search over just those documents.
+_DOCUMENT_SEARCH_SQL = """
+    WITH pool AS MATERIALIZED (
+      SELECT id, content, page_number, chunk_index, document_id, embedding
+      FROM chunks
+      WHERE document_id = ANY(%(document_ids)s)
+    )
+    SELECT
+      c.id, c.content, c.page_number, c.chunk_index,
+      d.filename, d.drive_file_id, c.document_id,
+      1 - (c.embedding <=> %(query)s::vector) AS similarity
+    FROM pool c
+    JOIN documents d ON d.id = c.document_id
+    WHERE 1 - (c.embedding <=> %(query)s::vector) >= %(min_similarity)s
+    ORDER BY c.embedding <=> %(query)s::vector
+    LIMIT %(top_k)s
+"""
+
+# A year in a question, in Latin or Devanagari digits (Marathi and Hindi write १९६५ for 1965).
+_YEAR = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
+_LATIN_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
 
 
 def embed_query(query: str) -> list[float]:
@@ -81,26 +106,64 @@ def embed_query(query: str) -> list[float]:
     return _normalize(values)
 
 
+def years_in(text: str) -> list[int]:
+    """The years (1900-2099) a question names, each once, in the order they appear."""
+    years = (int(year) for year in _YEAR.findall(text.translate(_LATIN_DIGITS)))
+    return list(dict.fromkeys(years))
+
+
+def volume_years(filename: str) -> tuple[int, int] | None:
+    """The first and last year an issue covers, read from its file name.
+
+    "1964-July To1965-June Part-1.pdf" is (1964, 1965); "1945 July.PDF" is (1945, 1945).
+    None when the name holds no year.
+    """
+    years = [int(year) for year in _YEAR.findall(filename)]
+    return (min(years), max(years)) if years else None
+
+
+def documents_for_years(years: list[int]) -> list[int]:
+    """The ids of the documents whose issues cover any of the years."""
+    with get_pooled_connection() as conn:
+        documents = conn.execute("SELECT id, filename FROM documents").fetchall()
+    ids = []
+    for document_id, filename in documents:
+        span = volume_years(filename)
+        if span and any(span[0] <= year <= span[1] for year in years):
+            ids.append(document_id)
+    return ids
+
+
 def search(query: str, top_k: int = TOP_K) -> list[dict]:
     """Return the chunks most similar to the query, best first.
 
     Each result is {chunk_id, content, page_number, chunk_index, filename,
     drive_file_id, document_id, similarity}, with cosine similarity of at least
-    MIN_SIMILARITY.
-    Returns an empty list when nothing is similar enough or the query is blank.
+    MIN_SIMILARITY. When the query names a year (such as 1965), only chunks of the issues
+    that cover that year are searched.
+    Returns an empty list when nothing is similar enough, no issue covers the year, or the
+    query is blank.
     """
     if top_k < 1:
         raise ValueError(f"top_k must be at least 1, got {top_k}")
 
     results: list[dict] = []
+    rows: list[tuple] = []
     if query.strip():
         ensure_matches_database()  # the query must come from the model behind the stored vectors
-        params = {
-            "query": Vector(embed_query(query)).to_text(),
-            "min_similarity": MIN_SIMILARITY,
-            "top_k": top_k,
-        }
-        rows = _run_search(params)
+        years = years_in(query)
+        document_ids = documents_for_years(years) if years else None
+        if years:
+            print(f"[search] year filter {years}: {len(document_ids)} matching document(s)")
+        if document_ids != []:  # a year that no issue covers has nothing to search
+            params = {
+                "query": Vector(embed_query(query)).to_text(),
+                "min_similarity": MIN_SIMILARITY,
+                "top_k": top_k,
+            }
+            if document_ids is not None:
+                params["document_ids"] = document_ids
+            rows = _run_search(params)
         results = [
             {
                 "chunk_id": chunk_id,
@@ -137,8 +200,9 @@ def _run_search(params: dict) -> list[tuple]:
     """
     for attempt in (1, 2):
         try:
+            sql = _DOCUMENT_SEARCH_SQL if "document_ids" in params else _SEARCH_SQL
             with get_pooled_connection() as conn:
-                return conn.execute(_SEARCH_SQL, params).fetchall()
+                return conn.execute(sql, params).fetchall()
         except PoolTimeout:
             raise  # every connection is busy; retrying would only wait again
         except psycopg.OperationalError:

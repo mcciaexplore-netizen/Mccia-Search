@@ -18,26 +18,30 @@ MAX_OUTPUT_TOKENS = 2048
 RETRY_DELAYS = (2, 4, 8)  # seconds before retry 1, 2 and 3
 REQUEST_TIMEOUT_MS = 120_000
 
+# What the model says, word for word, when the sources do not hold the answer.
+DECLINE_ANSWER = "This information is not available in the Sampada magazine archive."
+
 SYSTEM_PROMPT = (
-    "You are an expert research assistant for MCCIA "
-    "(Mahratta Chamber of Commerce, Industries and Agriculture), Pune. "
-    "You have access to Sampada — MCCIA's monthly journal published "
-    "from 1945 to 2017, written in Marathi, Hindi and English. "
+    "You are an expert on MCCIA (Mahratta Chamber of Commerce, Industries and "
+    "Agriculture), Pune, and on Sampada, its monthly magazine published from "
+    "1945 to 2017 in Marathi, Hindi and English. "
     "The magazine was originally called "
     "'मराठा चेंबर ऑफ कॉमर्स ॲण्ड इंडस्ट्रीजचें मासिक वृत्त' "
     "and later renamed Sampada.\n\n"
     "Rules:\n"
-    "1. Answer ONLY using the provided context. No outside knowledge.\n"
-    "2. Respond in the SAME language the user used to ask.\n"
-    "3. Even if the context is in Marathi and the question is in English "
-    "— translate and answer in English.\n"
-    "4. Always cite: issue year/month and page number.\n"
-    "5. If context is insufficient, say so honestly. Never guess.\n"
-    "6. For questions about the magazine name, MCCIA history, Pune industries "
-    "or Maharashtra economy — look carefully at ALL context before "
-    "saying not found.\n"
-    "7. When the question is about what something is called or named — "
-    "look for the exact Marathi or English name in the context."
+    "1. Answer ONLY from the numbered source blocks provided.\n"
+    "2. NEVER use outside knowledge or memory.\n"
+    "3. NEVER guess names, dates, companies or figures.\n"
+    "4. If the answer is not clearly stated in the sources, respond with exactly "
+    f'"{DECLINE_ANSWER}" and nothing else. Read every block before deciding that.\n'
+    "5. Always cite the exact source block numbers you used, each with its issue "
+    "and page as written in the block's header, for example "
+    '"[2] (1972-Jul To 1973-Jun.PDF, Page 45)".\n'
+    "6. If asked about a specific year, only use sources from that year.\n"
+    "7. Respond in the SAME language the user used to ask. Even if the sources are "
+    "in Marathi and the question is in English, translate and answer in English.\n"
+    "8. When the question is about what something is called or named, look for "
+    "the exact Marathi or English name in the sources."
 )
 
 NOT_FOUND_ANSWER = (
@@ -68,8 +72,9 @@ def generate_answer(query: str, chunks: list[dict]) -> dict:
     """Answer the query from the chunks (best first) with Gemini.
 
     Returns {answer, sources, found}. With no chunks there is nothing to answer
-    from, so a fixed "not found" message is returned without calling Gemini. At
-    most MAX_CONTEXT_CHUNKS chunks are used, for the prompt and for the sources.
+    from, so a fixed "not found" message is returned without calling Gemini. When Gemini
+    says the chunks do not hold the answer (DECLINE_ANSWER), found is False and there are
+    no sources. At most MAX_CONTEXT_CHUNKS chunks are used, for the prompt and for the sources.
     Transient Gemini errors are retried after 2s, 4s and 8s; a RuntimeError is
     raised if the answer still cannot be generated.
     """
@@ -78,6 +83,8 @@ def generate_answer(query: str, chunks: list[dict]) -> dict:
 
     used = chunks[:MAX_CONTEXT_CHUNKS]
     answer = _generate(build_prompt(query, used))
+    if _is_decline(answer):  # the pages it was given do not answer it, so none are shown
+        return {"answer": DECLINE_ANSWER, "sources": [], "found": False}
     return {"answer": answer, "sources": _build_sources(used), "found": True}
 
 
@@ -115,6 +122,11 @@ def _generate(prompt: str) -> str:
     if reason == types.FinishReason.MAX_TOKENS:
         print(f"[answer] WARNING: answer was cut off at {MAX_OUTPUT_TOKENS} tokens")
     return text
+
+
+def _is_decline(answer: str) -> bool:
+    """Whether the answer is only the decline sentence (quotes, case and a final full stop aside)."""
+    return answer.strip().strip("\"'“”‘’ ").rstrip(".").lower() == DECLINE_ANSWER.rstrip(".").lower()
 
 
 def _finish_reason(response: types.GenerateContentResponse) -> object:
