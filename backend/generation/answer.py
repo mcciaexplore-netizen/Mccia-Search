@@ -19,7 +19,7 @@ RETRY_DELAYS = (2, 4, 8)  # seconds before retry 1, 2 and 3
 REQUEST_TIMEOUT_MS = 120_000
 
 # What the model says, word for word, when the sources do not hold the answer.
-DECLINE_ANSWER = "This information is not available in the Sampada magazine archive."
+DECLINE_ANSWER = "Not in Sampada archive"
 
 SYSTEM_PROMPT = (
     "You are an expert on MCCIA (Mahratta Chamber of Commerce, Industries and "
@@ -30,7 +30,8 @@ SYSTEM_PROMPT = (
     "and later renamed Sampada.\n\n"
     "Rules:\n"
     "1. Answer ONLY from the numbered source blocks provided.\n"
-    "2. NEVER use outside knowledge or memory.\n"
+    "2. NEVER use outside knowledge or memory, not even for simple facts you know "
+    "(capitals, definitions, today's news): if the blocks do not state it, decline.\n"
     "3. NEVER guess names, dates, companies or figures.\n"
     "4. If the answer is not clearly stated in the sources, respond with exactly "
     f'"{DECLINE_ANSWER}" and nothing else. Read every block before deciding that.\n'

@@ -23,10 +23,10 @@ DIMENSIONS = {"gemini": 768, "local": 768, "bge": 1024}
 GEMINI_DIMENSION = DIMENSIONS["gemini"]
 BATCH_SIZES = {"local": 16, "bge": 8}  # texts a local model reads at once
 # The lowest cosine similarity at which a chunk still counts as a match. Each model spreads its
-# scores differently. Measured on 30 real questions: Gemini scores run higher, bge-m3 puts the
-# right chunk at a median 0.55 (0.41 at worst) and unrelated chunks around 0.35 (0.45 at the 95th
+# scores differently: Gemini's run higher. For bge-m3, measured on 30 real questions, the right
+# chunk scores a median 0.55 (0.41 at worst) and unrelated chunks around 0.35 (0.45 at the 95th
 # percentile), so 0.50 would drop 4 of those 30 right chunks and 0.40 drops none.
-MIN_SIMILARITIES = {"gemini": 0.50, "local": 0.50, "bge": 0.40}
+MIN_SIMILARITIES = {"gemini": 0.45, "local": 0.50, "bge": 0.40}
 
 _checked = False
 _check_lock = threading.Lock()

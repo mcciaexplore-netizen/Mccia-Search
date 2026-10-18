@@ -144,7 +144,7 @@ def search(query: str, top_k: int = TOP_K) -> list[dict]:
 
     Each result is {chunk_id, content, page_number, chunk_index, filename,
     drive_file_id, document_id, similarity}, with cosine similarity of at least the
-    engine's min_similarity() (0.50 for Gemini, 0.40 for bge-m3). When the query names a
+    engine's min_similarity() (0.45 for Gemini, 0.40 for bge-m3). When the query names a
     year (such as 1965), only chunks of the issues that cover that year are searched.
     Returns an empty list when nothing is similar enough, no issue covers the year, or the
     query is blank.
