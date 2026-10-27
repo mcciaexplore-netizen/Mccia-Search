@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
-import { sendChat } from "@/lib/api";
+import { SessionExpiredError, sendChat } from "@/lib/api";
+import { loadDraft, saveDraft, startRelaunch, wasRelaunched } from "@/lib/draft";
 import type { Message } from "@/lib/types";
 import Logo from "./Logo";
 import MessageBubble from "./MessageBubble";
@@ -83,9 +84,25 @@ export default function ChatWindow({ initialMessages = [], onMessagesChange }: C
   const messagesRef = useRef<Message[]>(initialMessages);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  // The question being typed survives a reload (see lib/draft.ts), notably the one a session ending causes.
+  const [draftLoaded, setDraftLoaded] = useState(false);
+  const [notice, setNotice] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const wasLoading = useRef(false);
+
+  useEffect(() => {
+    const draft = loadDraft();
+    if (draft) {
+      setInput(draft);
+      if (wasRelaunched()) setNotice("You were signed in again. Your question is back in the box: press Send.");
+    }
+    setDraftLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (draftLoaded) saveDraft(input);
+  }, [input, draftLoaded]);
 
   // Keep the newest message (or the typing indicator) in view.
   useEffect(() => {
@@ -149,6 +166,20 @@ export default function ChatWindow({ initialMessages = [], onMessagesChange }: C
         timestamp: new Date(),
       };
     } catch (err) {
+      if (err instanceof SessionExpiredError) {
+        // The sign-in ended: put the question back, then go round through the App Hub, which returns the person here
+        // signed in. The question is saved first, so it is still in the box afterwards.
+        saveDraft(query);
+        commit(messagesRef.current.filter((m) => m.id !== userMessage.id));
+        setInput(query);
+        setLoading(false);
+        if (startRelaunch()) {
+          window.location.reload();
+          return;
+        }
+        setNotice("Your session ended and signing in again did not work. Open MCCIA Search from the App Hub.");
+        return;
+      }
       reply = {
         id: newId(),
         role: "assistant",
@@ -240,7 +271,7 @@ export default function ChatWindow({ initialMessages = [], onMessagesChange }: C
           role="status"
           className="mx-auto mt-1.5 h-4 max-w-3xl text-center text-xs text-muted"
         >
-          {loading ? "Searching documents..." : ""}
+          {loading ? "Searching documents..." : notice}
         </p>
       </div>
     </section>

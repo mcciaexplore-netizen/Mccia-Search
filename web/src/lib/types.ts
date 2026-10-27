@@ -62,6 +62,8 @@ export interface AuditEntry {
   duration_ms: number | null;
   client: string | null;
   detail: string | null;
+  user_id?: string | null;
+  user_email?: string | null; // who asked (the signed-in person's email)
 }
 
 export interface AuditResponse {

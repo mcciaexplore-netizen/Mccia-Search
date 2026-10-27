@@ -26,7 +26,15 @@ const MEDIUM_WINDOW = "(min-width: 768px)";
 const newChatId = () =>
   `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
-export default function ChatShell() {
+/** The signed-in person (when single sign-on is on) and where the App Hub is. Both are null when the site is open. */
+interface ChatShellProps {
+  user?: { name: string; email: string; role: "user" | "admin" } | null;
+  hubUrl?: string | null;
+}
+
+export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps) {
+  // Settings (the knowledge base and the audit log) are for administrators; with no sign-in they stay open as before.
+  const canOpenSettings = !user || user.role === "admin";
   const [chats, setChats] = useState<Chat[]>([]);
   const chatsRef = useRef<Chat[]>([]);
   const [activeId, setActiveId] = useState(newChatId);
@@ -185,6 +193,25 @@ export default function ChatShell() {
         </div>
 
         <div className="border-t border-white/15 p-3">
+          {user && (
+            <div className="mb-2 rounded-lg bg-white/10 px-3 py-2.5 text-sm">
+              <p className="truncate font-semibold" title={user.name}>{user.name}</p>
+              <p className="truncate text-xs text-white/70" title={user.email}>{user.email}</p>
+              <div className="mt-2 flex items-center gap-3 text-xs font-medium">
+                {hubUrl && (
+                  <a href={hubUrl} className="rounded underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">
+                    Back to App Hub
+                  </a>
+                )}
+                <form method="post" action="/api/logout" className="ml-auto">
+                  <button type="submit" className="rounded underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">
+                    Log out
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
+          {canOpenSettings && (
           <button
             type="button"
             onClick={openSettings}
@@ -199,6 +226,7 @@ export default function ChatShell() {
             </svg>
             Settings
           </button>
+          )}
         </div>
       </aside>
 
@@ -270,7 +298,7 @@ export default function ChatShell() {
         </header>
 
         <div className="min-h-0 flex-1">
-          {view === "settings" ? (
+          {view === "settings" && canOpenSettings ? (
             <SettingsPanel />
           ) : (
             <ChatWindow

@@ -117,6 +117,7 @@ export default function AuditLog() {
                 <th scope="col" className="px-4 py-3 font-medium">When</th>
                 <th scope="col" className="px-4 py-3 font-medium">Type</th>
                 <th scope="col" className="px-4 py-3 font-medium">Details</th>
+                <th scope="col" className="px-4 py-3 font-medium">User</th>
                 <th scope="col" className="px-4 py-3 font-medium">Result</th>
                 <th scope="col" className="px-4 py-3 text-right font-medium">Sources</th>
                 <th scope="col" className="px-4 py-3 text-right font-medium">Took</th>
@@ -136,6 +137,7 @@ export default function AuditLog() {
                         <span className="block text-muted">{entry.detail}</span>
                       )}
                     </td>
+                    <td className="max-w-[12rem] truncate px-4 py-3 text-muted" title={entry.user_email ?? ""}>{entry.user_email ?? "–"}</td>
                     <td className="px-4 py-3">
                       <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${result.className}`}>{result.label}</span>
                     </td>
@@ -147,7 +149,7 @@ export default function AuditLog() {
               })}
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-muted">
+                  <td colSpan={8} className="px-4 py-8 text-center text-muted">
                     {loading ? "Loading audit log..." : "Nothing recorded yet."}
                   </td>
                 </tr>

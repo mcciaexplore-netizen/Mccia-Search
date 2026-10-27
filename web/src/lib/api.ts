@@ -4,8 +4,17 @@ import type { AuditResponse, ChatResponse, DocumentsResponse } from "./types";
 // the backend. The browser never talks to the backend directly, so the page works on
 // any port and the backend's CORS list does not matter.
 
+/** The person's sign-in ended (the server says so with a 401 marked relaunch); the page signs them in again. */
+export class SessionExpiredError extends Error {
+  constructor() {
+    super("Your session has ended.");
+    this.name = "SessionExpiredError";
+  }
+}
+
 async function failWith(res: Response): Promise<never> {
   const err = await res.json().catch(() => ({}));
+  if (res.status === 401 && err.relaunch === true) throw new SessionExpiredError();
   throw new Error(err.detail ?? `Server error ${res.status}`);
 }
 
