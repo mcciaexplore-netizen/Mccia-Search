@@ -9,9 +9,12 @@ export const dynamic = "force-dynamic";
 const BACKEND = process.env.BACKEND_URL ?? "http://localhost:8002";
 const MAX_BODY_BYTES = 8192;
 
-// A failure goes to a plain page that says what happened and links back to the hub. 303 turns the hub's POST into a GET.
-const fail = (req: NextRequest, reason: string) =>
-  NextResponse.redirect(new URL(`/sso-error?reason=${reason}`, req.url), { status: 303, headers: { "Cache-Control": "no-store" } });
+// A redirect with a RELATIVE address, so the browser stays on the host it used (a rebuilt absolute address can name another
+// host behind a proxy or in development, and the session cookie would not go with it). 303 turns the hub's POST into a GET.
+const redirectTo = (path: string) => new NextResponse(null, { status: 303, headers: { Location: path, "Cache-Control": "no-store" } });
+
+// A failure goes to a plain page that says what happened and links back to the hub.
+const fail = (_req: NextRequest, reason: string) => redirectTo(`/sso-error?reason=${reason}`);
 
 /**
  * Where the App Hub sends a signed-in person (an auto-submitted form with one field, `token`). The token is checked
@@ -62,7 +65,7 @@ export async function POST(req: NextRequest) {
   }
 
   const session = await createSessionToken({ id: claims.id, email: claims.email, name: claims.name, role: claims.role }, settings.sessionSecret);
-  const response = NextResponse.redirect(new URL("/", req.url), { status: 303, headers: { "Cache-Control": "no-store" } });
+  const response = redirectTo("/");
   response.cookies.set(SESSION_COOKIE, session, {
     httpOnly: true,
     secure: req.nextUrl.protocol === "https:",
@@ -74,6 +77,6 @@ export async function POST(req: NextRequest) {
 }
 
 // Someone who opens the address by hand goes to the front door, which sorts out whether they need to sign in.
-export function GET(req: NextRequest) {
-  return NextResponse.redirect(new URL("/", req.url), { status: 303 });
+export function GET() {
+  return redirectTo("/");
 }
