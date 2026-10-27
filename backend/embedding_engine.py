@@ -147,7 +147,7 @@ def _local_model(name: str):
     except ImportError as exc:
         raise RuntimeError(
             f"EMBEDDING_ENGINE={name} needs the sentence-transformers package. "
-            "Run `uv sync` in backend/."
+            "Run `uv sync --extra local-embeddings` in backend/."
         ) from exc
     model_name = BGE_MODEL if name == "bge" else LOCAL_EMBEDDING_MODEL
     print(f"[embed] loading the local model {model_name}...")

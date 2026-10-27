@@ -1465,13 +1465,15 @@ dependencies = [
     { name = "pytest" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
-    { name = "sentence-transformers" },
     { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
 easyocr = [
     { name = "easyocr" },
+]
+local-embeddings = [
+    { name = "sentence-transformers" },
 ]
 paddle = [
     { name = "paddleocr" },
@@ -1497,10 +1499,10 @@ requires-dist = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
-    { name = "sentence-transformers", specifier = ">=6.1.0" },
+    { name = "sentence-transformers", marker = "extra == 'local-embeddings'", specifier = ">=6.1.0" },
     { name = "uvicorn" },
 ]
-provides-extras = ["easyocr", "paddle"]
+provides-extras = ["easyocr", "paddle", "local-embeddings"]
 
 [[package]]
 name = "mdurl"
