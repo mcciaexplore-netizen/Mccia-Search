@@ -1,7 +1,11 @@
 // Verifying the sign-in token the App Hub issues. Pure (only `jose`), so it is tested directly.
 // The token is a JWT signed with the hub's Ed25519 private key; this app holds only the public key,
 // so it can check tokens but never make one.
-import { decodeProtectedHeader, errors, importSPKI, jwtVerify } from "jose";
+// Narrow imports: the whole of "jose" would also bundle its encryption code, which this app never uses.
+import { decodeProtectedHeader } from "jose/decode/protected_header";
+import { JWTExpired } from "jose/errors";
+import { importSPKI } from "jose/key/import";
+import { jwtVerify } from "jose/jwt/verify";
 
 export const ISSUER = "mccia-app-hub";
 export const ROLES = ["user", "admin"] as const;
@@ -57,7 +61,7 @@ export async function verifyHubToken(
     }));
   } catch (e) {
     if (e instanceof SsoError) throw e;
-    if (e instanceof errors.JWTExpired) throw new SsoError("expired", "The sign-in token has expired.");
+    if (e instanceof JWTExpired) throw new SsoError("expired", "The sign-in token has expired.");
     throw new SsoError("invalid", "The sign-in token is not valid.");
   }
 

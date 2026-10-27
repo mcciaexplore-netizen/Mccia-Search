@@ -1,6 +1,7 @@
 // This app's own sign-in cookie: a short-lived JWT (HS256) signed with SESSION_SECRET.
 // Pure (only `jose`), so it runs in the middleware (Edge) and in route handlers, and is tested directly.
-import { jwtVerify, SignJWT } from "jose";
+import { SignJWT } from "jose/jwt/sign";
+import { jwtVerify } from "jose/jwt/verify";
 import { ROLES, type HubUser, type Role } from "./sso";
 
 export const SESSION_COOKIE = "mccia_session";
