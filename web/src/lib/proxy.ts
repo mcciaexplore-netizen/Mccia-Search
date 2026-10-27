@@ -3,13 +3,31 @@ import { NextResponse } from "next/server";
 // The backend's address. Only the server reads it; set BACKEND_URL in web/.env.local.
 const BACKEND = process.env.BACKEND_URL ?? "http://localhost:8002";
 
+// The backend wants an API key on every route but /health. These two variables are read only
+// here, on the server (no NEXT_PUBLIC_ prefix), so a key is never sent to a browser:
+//   BACKEND_API_KEY    the chat and the page images
+//   BACKEND_ADMIN_KEY  the document list, ingestion and the audit log
+export type KeyKind = "user" | "admin";
+
+function keyHeader(kind: KeyKind): Record<string, string> {
+  const name = kind === "admin" ? "BACKEND_ADMIN_KEY" : "BACKEND_API_KEY";
+  const key = process.env[name];
+  if (!key) {
+    console.error(`${name} is not set, so the backend will refuse this request.`);
+    return {};
+  }
+  return { [kind === "admin" ? "X-Admin-Key" : "X-API-Key"]: key };
+}
+
 /** Forward a request to the backend and relay its JSON answer and status code. */
 export async function proxyToBackend(
   path: string,
-  init?: RequestInit
+  init?: RequestInit,
+  kind: KeyKind = "user"
 ): Promise<NextResponse> {
   try {
-    const res = await fetch(`${BACKEND}${path}`, { ...init, cache: "no-store" });
+    const headers = { ...(init?.headers as Record<string, string> | undefined), ...keyHeader(kind) };
+    const res = await fetch(`${BACKEND}${path}`, { ...init, headers, cache: "no-store" });
     const data = await res.json();
     return NextResponse.json(data, { status: res.status });
   } catch {
@@ -27,7 +45,7 @@ export async function proxyToBackend(
  */
 export async function proxyFileFromBackend(path: string): Promise<Response> {
   try {
-    const res = await fetch(`${BACKEND}${path}`, { cache: "no-store" });
+    const res = await fetch(`${BACKEND}${path}`, { headers: keyHeader("user"), cache: "no-store" });
     if (!res.ok) {
       const data = await res.json().catch(() => ({ detail: `Server error ${res.status}` }));
       return NextResponse.json(data, { status: res.status });

@@ -53,6 +53,12 @@ LOCAL_EMBEDDING_MODEL = (
     os.environ.get("LOCAL_EMBEDDING_MODEL") or ""
 ).strip() or "paraphrase-multilingual-mpnet-base-v2"
 
+# Keys the API requires on every route but /health (see auth.py). API_KEY is for the chat,
+# ADMIN_API_KEY for the document list, ingestion and the audit log. The web app's server sends
+# them (as BACKEND_API_KEY and BACKEND_ADMIN_KEY); a browser never sees them.
+API_KEY = (os.environ.get("API_KEY") or "").strip()
+ADMIN_API_KEY = (os.environ.get("ADMIN_API_KEY") or "").strip()
+
 
 def validate_config() -> None:
     """Raise ValueError naming every required variable that is not set."""

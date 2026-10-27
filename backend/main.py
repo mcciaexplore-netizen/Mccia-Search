@@ -3,11 +3,12 @@
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 import audit
+import auth
 import pages
 from config import validate_config
 from db.connection import close_pool, get_connection, get_pool, get_pooled_connection, init_db
@@ -29,6 +30,7 @@ from models.schemas import (
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     validate_config()
+    auth.check_configured()  # no keys, no start: the API must never run open
     init_db()
     # A run that crashed or was killed leaves its document 'processing' for good.
     with get_connection() as conn:
@@ -49,7 +51,8 @@ async def lifespan(app: FastAPI):
     close_pool()
 
 
-app = FastAPI(title="MCCIA Search", lifespan=lifespan)
+# No /docs, /redoc or /openapi.json: only /health may be reached without a key.
+app = FastAPI(title="MCCIA Search", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
 app.add_middleware(
     CORSMiddleware,
@@ -64,7 +67,7 @@ def health():
     return HealthResponse(status="ok", service="mccia-search")
 
 
-@app.post("/chat", response_model=ChatResponse)
+@app.post("/chat", response_model=ChatResponse, dependencies=[Depends(auth.require_api_key)])
 def chat(req: ChatRequest, request: Request, background_tasks: BackgroundTasks):
     started = time.perf_counter()
     client = audit.client_of(request)
@@ -125,7 +128,7 @@ def run_sync_and_record() -> None:
     )
 
 
-@app.post("/ingest/sync", response_model=IngestTriggerResponse)
+@app.post("/ingest/sync", response_model=IngestTriggerResponse, dependencies=[Depends(auth.require_admin_key)])
 def ingest_sync(background_tasks: BackgroundTasks, request: Request):
     client = audit.client_of(request)
     if is_sync_running():
@@ -142,7 +145,7 @@ def ingest_sync(background_tasks: BackgroundTasks, request: Request):
     )
 
 
-@app.get("/ingest/status", response_model=IngestStatusResponse)
+@app.get("/ingest/status", response_model=IngestStatusResponse, dependencies=[Depends(auth.require_admin_key)])
 def ingest_status():
     with get_connection() as conn:
         row = conn.execute(
@@ -160,7 +163,7 @@ def ingest_status():
     )
 
 
-@app.get("/documents", response_model=DocumentsResponse)
+@app.get("/documents", response_model=DocumentsResponse, dependencies=[Depends(auth.require_admin_key)])
 def documents():
     """Every document the pipeline has seen, oldest issue first, with its page and chunk counts."""
     with get_pooled_connection() as conn:
@@ -191,7 +194,8 @@ def documents():
     }
 
 
-@app.get("/documents/{document_id}/pages/{page_number}")
+# The chat shows these, so they take the ordinary key, not the admin one.
+@app.get("/documents/{document_id}/pages/{page_number}", dependencies=[Depends(auth.require_api_key)])
 def document_page(document_id: int, page_number: int):
     """One page of a document as a JPEG, so a source can be viewed as it was printed.
 
@@ -207,7 +211,7 @@ def document_page(document_id: int, page_number: int):
     return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
 
 
-@app.get("/audit", response_model=AuditResponse)
+@app.get("/audit", response_model=AuditResponse, dependencies=[Depends(auth.require_admin_key)])
 def audit_log(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
