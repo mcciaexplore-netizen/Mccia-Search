@@ -8,7 +8,9 @@ MAX_QUERY_CHARS = 2000
 MAX_DETAIL_CHARS = 500
 MAX_CLIENT_CHARS = 100
 
-_COLUMNS = "id, occurred_at, event, query, found, sources, status, duration_ms, client, detail"
+MAX_USER_CHARS = 254
+
+_COLUMNS = "id, occurred_at, event, query, found, sources, status, duration_ms, client, detail, user_id, user_email"
 
 
 def client_of(request: Request) -> str:
@@ -28,13 +30,15 @@ def record(
     duration_ms: int | None = None,
     client: str | None = None,
     detail: str | None = None,
+    user_id: str | None = None,
+    user_email: str | None = None,
 ) -> None:
     """Write one audit row. Never raises: a logging problem must not break a request."""
     try:
         with get_pooled_connection() as conn:
             conn.execute(
-                "INSERT INTO audit_log (event, query, found, sources, status, duration_ms, client, detail) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                "INSERT INTO audit_log (event, query, found, sources, status, duration_ms, client, detail, user_id, user_email) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     event,
                     query[:MAX_QUERY_CHARS] if query is not None else None,
@@ -44,6 +48,8 @@ def record(
                     duration_ms,
                     client[:MAX_CLIENT_CHARS] if client is not None else None,
                     detail[:MAX_DETAIL_CHARS] if detail is not None else None,
+                    user_id[:MAX_USER_CHARS] if user_id else None,
+                    user_email[:MAX_USER_CHARS] if user_email else None,
                 ),
             )
     except Exception as exc:  # noqa: BLE001

@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 import audit
 import auth
 import pages
+import sso
 from config import validate_config
 from db.connection import close_pool, get_connection, get_pool, get_pooled_connection, init_db
 from generation.answer import rag
@@ -24,6 +25,8 @@ from models.schemas import (
     IngestStatusResponse,
     IngestTriggerResponse,
     SourceItem,
+    SsoLoginRequest,
+    SsoLoginResponse,
 )
 
 
@@ -68,7 +71,12 @@ def health():
 
 
 @app.post("/chat", response_model=ChatResponse, dependencies=[Depends(auth.require_api_key)])
-def chat(req: ChatRequest, request: Request, background_tasks: BackgroundTasks):
+def chat(
+    req: ChatRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    user: auth.User = Depends(auth.require_user),
+):
     started = time.perf_counter()
     client = audit.client_of(request)
 
@@ -76,7 +84,7 @@ def chat(req: ChatRequest, request: Request, background_tasks: BackgroundTasks):
         return int((time.perf_counter() - started) * 1000)
 
     if not req.query.strip():
-        audit.record("chat", query=req.query, status=400, duration_ms=elapsed_ms(), client=client, detail="blank question")
+        audit.record("chat", query=req.query, status=400, duration_ms=elapsed_ms(), client=client, detail="blank question", user_id=user.id, user_email=user.email)
         raise HTTPException(status_code=400, detail="query must not be blank")
     try:
         result = rag(req.query, req.top_k)
@@ -87,7 +95,7 @@ def chat(req: ChatRequest, request: Request, background_tasks: BackgroundTasks):
         )
     except Exception as exc:
         print(f"[chat] error: {exc}")
-        audit.record("chat", query=req.query, status=500, duration_ms=elapsed_ms(), client=client, detail=type(exc).__name__)
+        audit.record("chat", query=req.query, status=500, duration_ms=elapsed_ms(), client=client, detail=type(exc).__name__, user_id=user.id, user_email=user.email)
         raise HTTPException(
             status_code=500,
             detail="An error occurred while processing your request.",
@@ -102,8 +110,27 @@ def chat(req: ChatRequest, request: Request, background_tasks: BackgroundTasks):
         status=200,
         duration_ms=elapsed_ms(),
         client=client,
+        user_id=user.id,
+        user_email=user.email,
     )
     return response
+
+
+@app.post("/sso/login", response_model=SsoLoginResponse, dependencies=[Depends(auth.require_admin_key)])
+def sso_login(req: SsoLoginRequest):
+    """Record a hub sign-in the web app has verified: spend its token id once and keep the user up to date.
+
+    Called by the web app's server with the admin key, never by a browser. A token that was already used is refused
+    with 409.
+    """
+    try:
+        return sso.register_login(
+            jti=req.jti, exp=req.exp, hub_user_id=req.hub_user_id, email=req.email, name=req.name, role=req.role
+        )
+    except sso.TokenAlreadyUsed:
+        raise HTTPException(status_code=409, detail="This sign-in link was already used.")
+    except sso.TokenExpiryInvalid:
+        raise HTTPException(status_code=400, detail="This sign-in link is not valid.")
 
 
 def run_sync_and_record() -> None:

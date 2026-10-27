@@ -68,3 +68,34 @@ BEGIN
     ALTER TABLE chunks ALTER COLUMN embedding DROP NOT NULL;
   END IF;
 END $$;
+
+-- Single sign-on from the App Hub. users: everyone who has signed in (one row per hub user, kept up to date at every
+-- sign-in). sso_used_jti: the sign-in tokens already spent; a token's id (jti) can be inserted only once, which makes the
+-- replay check atomic. Rows are only needed until their token expires, and are cleaned up as people sign in.
+CREATE TABLE IF NOT EXISTS users (
+  id          BIGSERIAL PRIMARY KEY,
+  hub_user_id TEXT NOT NULL UNIQUE,
+  email       TEXT NOT NULL,
+  name        TEXT NOT NULL,
+  role        TEXT NOT NULL CHECK (role IN ('user', 'admin')),
+  first_seen  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS sso_used_jti (
+  jti        TEXT PRIMARY KEY,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS sso_used_jti_expires_idx ON sso_used_jti (expires_at);
+
+-- Who asked each question. Checked first, so a startup does not lock the table when there is nothing to change.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns WHERE table_name = 'audit_log' AND column_name = 'user_id'
+  ) THEN
+    ALTER TABLE audit_log ADD COLUMN user_id TEXT, ADD COLUMN user_email TEXT;
+  END IF;
+END $$;

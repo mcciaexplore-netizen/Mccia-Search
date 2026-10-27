@@ -7,7 +7,9 @@ The server refuses to start without both (see check_configured), so a missing ke
 leave the API open.
 """
 
+import re
 import secrets
+from typing import NamedTuple
 
 from fastapi import Header, HTTPException
 
@@ -51,3 +53,25 @@ def require_admin_key(x_admin_key: str | None = Header(default=None)) -> None:
     """Dependency for the document list, ingestion and the audit log."""
     if not _matches(x_admin_key, ADMIN_API_KEY):
         raise _refuse()
+
+
+class User(NamedTuple):
+    id: str
+    email: str | None
+
+
+_USER_ID = re.compile(r"^[A-Za-z0-9._:@-]{1,100}$")
+_EMAIL = re.compile(r"^[^\s<>\x00-\x1f]{3,254}$")
+
+
+def require_user(
+    x_user_id: str | None = Header(default=None),
+    x_user_email: str | None = Header(default=None),
+) -> User:
+    """Who is asking, as the web app's server says. Only meaningful behind require_api_key, which runs first on
+    the routes that use both, so a caller without the key never gets this far. The web app sends the user it
+    signed in; a request with no user id is refused."""
+    if not x_user_id or not _USER_ID.match(x_user_id):
+        raise HTTPException(status_code=400, detail="X-User-Id is required.")
+    email = x_user_email.strip() if x_user_email else None
+    return User(id=x_user_id, email=email if email and _EMAIL.match(email) else None)

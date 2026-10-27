@@ -1,6 +1,8 @@
 """Pydantic models for API request and response bodies."""
 
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 
 class ChatRequest(BaseModel):
@@ -72,8 +74,31 @@ class AuditEntry(BaseModel):
     duration_ms: int | None = None
     client: str | None = None
     detail: str | None = None
+    user_id: str | None = None
+    user_email: str | None = None
 
 
 class AuditResponse(BaseModel):
     total: int
     items: list[AuditEntry]
+
+
+class SsoLoginRequest(BaseModel):
+    """A verified hub sign-in, sent by the web app's server (never a browser) to record it."""
+
+    jti: str = Field(min_length=8, max_length=100)
+    exp: int  # when the token expires, seconds since 1970
+    hub_user_id: str = Field(min_length=1, max_length=100)
+    email: str = Field(min_length=3, max_length=254)
+    name: str = Field(min_length=1, max_length=200)
+    role: Literal["user", "admin"]
+
+
+class SsoLoginResponse(BaseModel):
+    id: int
+    hub_user_id: str
+    email: str
+    name: str
+    role: str
+    first_seen: str
+    last_seen: str
