@@ -4,6 +4,7 @@ import atexit
 import struct
 import threading
 from pathlib import Path
+from time import monotonic
 
 import psycopg
 from pgvector.psycopg import register_vector
@@ -18,6 +19,18 @@ SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 CONNECT_TIMEOUT_SECONDS = 30  # allows for Neon waking a suspended compute
 POOL_MIN_SIZE = 1
 POOL_MAX_SIZE = 5
+# Neon suspends an idle compute and drops its connections, and a pooled connection dropped that way only shows it on its next use
+# ("SSL connection has been closed unexpectedly", a 500 for whoever asked). A pooled connection that sat unused for longer than this is
+# tested before it is handed out, and replaced if it is dead. One used a moment ago is not tested: the test is a round trip to Ohio.
+IDLE_CHECK_SECONDS = 30
+# Let the operating system notice a connection the network dropped silently, instead of waiting on it for minutes.
+POOL_KEEPALIVE = {
+    "keepalives": 1,
+    "keepalives_idle": 30,
+    "keepalives_interval": 10,
+    "keepalives_count": 3,
+    "tcp_user_timeout": 10_000,  # ms; ignored where the system has no such option
+}
 
 _pool: ConnectionPool | None = None
 _pool_lock = threading.Lock()
@@ -41,6 +54,23 @@ class _VectorBinaryLoader(Loader):
         # int16 dimension count, int16 unused, then big-endian float32 values.
         dimensions = struct.unpack_from(">H", data)[0]
         return list(struct.unpack_from(f">{dimensions}f", data, 4))
+
+
+def _mark_used(conn: psycopg.Connection) -> None:
+    """Note when the database last answered on this connection (a new one, or one just handed back in good order)."""
+    conn._last_used = monotonic()  # type: ignore[attr-defined]
+
+
+def _check_if_idle(conn: psycopg.Connection) -> None:
+    """The pool's check, run each time a connection is requested: test it only if it has sat idle for a while.
+
+    Raising makes the pool discard this connection and try another (or open a new one).
+    """
+    last_used = getattr(conn, "_last_used", None)
+    if last_used is not None and monotonic() - last_used < IDLE_CHECK_SECONDS:
+        return
+    ConnectionPool.check_connection(conn)  # an empty query; raises if the connection is dead
+    _mark_used(conn)
 
 
 def get_connection() -> psycopg.Connection:
@@ -72,6 +102,9 @@ def get_pool() -> ConnectionPool:
     - the pgvector type is not registered, which costs about 3 s per new connection.
       Pass vectors as text, Vector(...).to_text() with %s::vector, as search does.
     Use get_connection() for writes, transactions, or reading vector columns.
+
+    A connection idle for more than IDLE_CHECK_SECONDS is tested when it is requested and replaced
+    if Neon has dropped it, so a request is not the one to find that out.
     """
     global _pool
     with _pool_lock:
@@ -91,7 +124,11 @@ def get_pool() -> ConnectionPool:
                     "prepare_threshold": None,
                     "connect_timeout": CONNECT_TIMEOUT_SECONDS,
                     "autocommit": True,
+                    **POOL_KEEPALIVE,
                 },
+                configure=_mark_used,
+                check=_check_if_idle,
+                reset=_mark_used,
                 open=True,
             )
             try:
