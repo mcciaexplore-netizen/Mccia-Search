@@ -28,7 +28,8 @@ const newChatId = () =>
 
 /** The signed-in person (when single sign-on is on) and where the App Hub is. Both are null when the site is open. */
 interface ChatShellProps {
-  user?: { name: string; email: string; role: "user" | "admin" } | null;
+  /** `hubUrl`: from the hub's sign-in token, for the "‹ App Hub" link at the top of the sidebar. */
+  user?: { name: string; email: string; role: "user" | "admin"; hubUrl?: string | null } | null;
   hubUrl?: string | null;
 }
 
@@ -168,6 +169,12 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
         }`}
       >
         <div className="p-5 pb-3">
+          {user?.hubUrl && (
+            <a href={user.hubUrl} className="mb-2 inline-flex items-center gap-1 rounded text-xs text-white/70 transition-colors hover:text-[#2a6b7c] focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5"><path d="M15 18l-6-6 6-6" /></svg>
+              App Hub
+            </a>
+          )}
           <div className="rounded-xl bg-white px-4 py-3 shadow-sm">
             <Logo width={176} />
           </div>
@@ -198,7 +205,7 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
               <p className="truncate font-semibold" title={user.name}>{user.name}</p>
               <p className="truncate text-xs text-white/70" title={user.email}>{user.email}</p>
               <div className="mt-2 flex items-center gap-3 text-xs font-medium">
-                {hubUrl && (
+                {hubUrl && !user.hubUrl && (
                   <a href={hubUrl} className="rounded underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">
                     Back to App Hub
                   </a>

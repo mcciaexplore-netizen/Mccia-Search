@@ -7,5 +7,5 @@ export const dynamic = "force-dynamic"; // who is signed in is read from the coo
 export default async function Home() {
   const settings = ssoEnforced() ? ssoSettings() : null;
   const user = settings?.ok ? await getSessionUser() : null;
-  return <ChatShell user={user ? { name: user.name, email: user.email, role: user.role } : null} hubUrl={settings?.ok ? settings.hubUrl : null} />;
+  return <ChatShell user={user ? { name: user.name, email: user.email, role: user.role, hubUrl: user.hubUrl ?? null } : null} hubUrl={settings?.ok ? settings.hubUrl : null} />;
 }

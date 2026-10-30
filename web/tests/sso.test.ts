@@ -116,3 +116,11 @@ test("SSO settings: off by default, complete when set, incomplete is reported (n
     process.env.HUB_URL = "http://localhost:3998"; assert.equal(ssoSettings().ok, true);
   } finally { process.env = keep; }
 });
+
+test("hub_url: kept from the token into the session, only as an http(s) address", async () => {
+  assert.equal((await verify(await token({ hub_url: "https://mccia-apphub.vercel.app/" }))).hubUrl, "https://mccia-apphub.vercel.app");
+  for (const bad of [undefined, "javascript:alert(1)", "not a url", 42]) assert.equal("hubUrl" in (await verify(await token({ hub_url: bad }))), false);
+  const t = await createSessionToken({ ...USER, hubUrl: "https://mccia-apphub.vercel.app" }, SECRET, NOW);
+  assert.equal((await readSessionToken(t, SECRET, NOW))?.hubUrl, "https://mccia-apphub.vercel.app");
+  assert.equal("hubUrl" in ((await readSessionToken(await createSessionToken(USER, SECRET, NOW), SECRET, NOW)) ?? {}), false);
+});

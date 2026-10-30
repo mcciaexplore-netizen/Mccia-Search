@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
     return fail(req, res.status >= 500 ? "unavailable" : "config");
   }
 
-  const session = await createSessionToken({ id: claims.id, email: claims.email, name: claims.name, role: claims.role }, settings.sessionSecret);
+  const session = await createSessionToken({ id: claims.id, email: claims.email, name: claims.name, role: claims.role, hubUrl: claims.hubUrl }, settings.sessionSecret);
   const response = redirectTo("/");
   response.cookies.set(SESSION_COOKIE, session, {
     httpOnly: true,

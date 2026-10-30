@@ -2,7 +2,7 @@
 // Pure (only `jose`), so it runs in the middleware (Edge) and in route handlers, and is tested directly.
 import { SignJWT } from "jose/jwt/sign";
 import { jwtVerify } from "jose/jwt/verify";
-import { ROLES, type HubUser, type Role } from "./sso";
+import { hubUrlOf, ROLES, type HubUser, type Role } from "./sso";
 
 export const SESSION_COOKIE = "mccia_session";
 /** A sign-in lasts two hours. The hub re-checks access each time a person is sent back to it, so this is also the longest a removed person can stay in. */
@@ -17,7 +17,7 @@ const keyOf = (secret: string) => {
 
 export async function createSessionToken(user: HubUser, secret: string, now: Date = new Date()): Promise<string> {
   const iat = Math.floor(now.getTime() / 1000);
-  return new SignJWT({ email: user.email, name: user.name, role: user.role })
+  return new SignJWT({ email: user.email, name: user.name, role: user.role, ...(user.hubUrl ? { hub_url: user.hubUrl } : {}) })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(user.id)
     .setIssuer(ISSUER)
@@ -33,7 +33,8 @@ export async function readSessionToken(token: string | undefined, secret: string
     const { payload } = await jwtVerify(token, keyOf(secret), { algorithms: ["HS256"], issuer: ISSUER, currentDate: now });
     const { sub, email, name, role } = payload;
     if (typeof sub !== "string" || typeof email !== "string" || typeof name !== "string" || !ROLES.includes(role as Role)) return null;
-    return { id: sub, email, name, role: role as Role };
+    const hubUrl = hubUrlOf(payload.hub_url);
+    return { id: sub, email, name, role: role as Role, ...(hubUrl ? { hubUrl } : {}) };
   } catch {
     return null;
   }

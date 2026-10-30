@@ -10,7 +10,8 @@ import { jwtVerify } from "jose/jwt/verify";
 export const ISSUER = "mccia-app-hub";
 export const ROLES = ["user", "admin"] as const;
 export type Role = (typeof ROLES)[number];
-export type HubUser = { id: string; email: string; name: string; role: Role };
+/** `hubUrl`: where the hub lives (the token's hub_url), for the sidebar's "‹ App Hub" link; absent when the hub did not send one. */
+export type HubUser = { id: string; email: string; name: string; role: Role; hubUrl?: string };
 export type HubClaims = HubUser & { jti: string; iat: number; exp: number };
 
 const ACCEPTED_KEY_IDS = new Set(["hub-1"]); // add the next id here when the hub's key is rotated
@@ -27,6 +28,17 @@ export class SsoError extends Error {
 }
 
 const isText = (v: unknown, max: number): v is string => typeof v === "string" && v.length > 0 && v.length <= max;
+
+/** An http(s) address without the trailing "/", or undefined: it becomes a link, so nothing else (javascript:, ...) is kept. */
+export function hubUrlOf(v: unknown): string | undefined {
+  if (!isText(v, 300)) return undefined;
+  try {
+    const u = new URL(v);
+    return u.protocol === "https:" || u.protocol === "http:" ? u.href.replace(/\/+$/, "") : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Checks signature (EdDSA only), issuer, audience, expiry and the claims this app relies on, and returns them.
@@ -73,5 +85,6 @@ export async function verifyHubToken(
   if (typeof iat !== "number" || typeof exp !== "number") throw new SsoError("invalid", "The sign-in token has no times.");
   if (exp - iat > MAX_LIFETIME_SECONDS) throw new SsoError("invalid", "The sign-in token lives too long.");
   if (iat > now.getTime() / 1000 + CLOCK_TOLERANCE_SECONDS * 6) throw new SsoError("invalid", "The sign-in token is from the future.");
-  return { id: sub, email, name, role: role as Role, jti, iat, exp };
+  const hubUrl = hubUrlOf(payload.hub_url);
+  return { id: sub, email, name, role: role as Role, ...(hubUrl ? { hubUrl } : {}), jti, iat, exp };
 }
