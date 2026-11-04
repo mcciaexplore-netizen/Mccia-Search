@@ -73,6 +73,21 @@ def health():
     return HealthResponse(status="ok", service="mccia-search")
 
 
+def _audit_detail(query: str, result: dict) -> str | None:
+    """What the audit log says about a question besides the question itself, so that a follow-up can be checked.
+
+    When a follow-up was made specific ("Tell me about him" became "Tell me about Shri X, MCCIA president in 1972") it says what was
+    searched and what was worked out; when the user was asked to clarify, it says so. Nothing for a question searched as asked.
+    """
+    resolved = f" | resolved: {result['resolved']}" if result.get("resolved") else ""
+    if result.get("clarify"):
+        return f"asked to clarify{resolved}"
+    searched = result.get("search_query")
+    if searched in (None, query):
+        return None
+    return f"searched as: {searched}{resolved}"
+
+
 @app.post("/chat", response_model=ChatResponse, dependencies=[Depends(auth.require_api_key)])
 def chat(
     req: ChatRequest,
@@ -95,6 +110,7 @@ def chat(
             answer=result["answer"],
             sources=[SourceItem(**s) for s in result["sources"]],
             found=result["found"],
+            clarify=result.get("clarify", False),
         )
     except Exception as exc:
         print(f"[chat] error: {exc}")
@@ -113,8 +129,7 @@ def chat(
         status=200,
         duration_ms=elapsed_ms(),
         client=client,
-        # A follow-up is searched as a standalone question; the audit log shows what was searched when that differs from what was asked.
-        detail=f"searched as: {result['search_query']}" if result.get("search_query") not in (None, req.query) else None,
+        detail=_audit_detail(req.query, result),
         user_id=user.id,
         user_email=user.email,
     )

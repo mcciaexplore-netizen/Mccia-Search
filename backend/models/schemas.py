@@ -30,6 +30,8 @@ class ChatResponse(BaseModel):
     answer: str
     sources: list[SourceItem]
     found: bool
+    # True when the answer is a question back (who or what is meant?) rather than a result: the page does not call it "No results found".
+    clarify: bool = False
 
 
 class IngestStatusResponse(BaseModel):

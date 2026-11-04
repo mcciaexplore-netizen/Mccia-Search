@@ -28,7 +28,7 @@ export default function MessageBubble({ message }: { message: Message }) {
           {/* Images are not rendered: a remote image URL in a model answer could leak data. */}
           <ReactMarkdown disallowedElements={["img"]}>{message.content}</ReactMarkdown>
         </div>
-        {message.found === false && (
+        {message.found === false && !message.clarify && (
           <span className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-accent/50 bg-accent/10 px-3 py-1 text-sm font-medium text-ink">
             <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-accent" />
             No results found

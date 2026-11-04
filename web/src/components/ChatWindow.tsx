@@ -167,6 +167,7 @@ export default function ChatWindow({ initialMessages = [], onMessagesChange }: C
         content: response.answer,
         sources: response.sources,
         found: response.found,
+        ...(response.clarify === true ? { clarify: true } : {}),
         timestamp: new Date(),
       };
     } catch (err) {

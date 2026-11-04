@@ -39,6 +39,7 @@ function reviveMessage(raw: unknown): Message | null {
     );
   }
   if (typeof m.found === "boolean") message.found = m.found;
+  if (m.clarify === true) message.clarify = true;
   return message;
 }
 

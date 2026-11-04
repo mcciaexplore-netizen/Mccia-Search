@@ -19,9 +19,13 @@ def client(monkeypatch):
 
     def fake_rag(query, top_k=None, chat_history=None):
         calls["rag"].append({"query": query, "top_k": top_k, "history": chat_history})
-        return {"answer": "Shri A (1965 issue).", "sources": [], "found": True, "search_query": calls["searched_as"]}
+        if calls["clarify"]:
+            return {"answer": "Could you clarify who/what you are referring to?", "sources": [], "found": False, "clarify": True,
+                    "search_query": None, "resolved": calls["resolved"]}
+        return {"answer": "Shri A (1965 issue).", "sources": [], "found": True, "clarify": False,
+                "search_query": calls["searched_as"], "resolved": calls["resolved"]}
 
-    calls["searched_as"] = None
+    calls["searched_as"], calls["resolved"], calls["clarify"] = None, "", False
     monkeypatch.setattr(main, "rag", fake_rag)
     monkeypatch.setattr(main.audit, "record", lambda *a, **kw: calls["audit"].append({"args": a, **kw}))
     test_client = TestClient(main.app)  # without `with`: the startup (database, pool) is not run
@@ -33,7 +37,7 @@ def test_a_question_without_history_still_works_as_before(client):
     client.calls["searched_as"] = "Who was MCCIA president in 1965?"
     response = client.post("/chat", json={"query": "Who was MCCIA president in 1965?"}, headers=HEADERS)
     assert response.status_code == 200
-    assert response.json() == {"answer": "Shri A (1965 issue).", "sources": [], "found": True}
+    assert response.json() == {"answer": "Shri A (1965 issue).", "sources": [], "found": True, "clarify": False}
     assert client.calls["rag"] == [{"query": "Who was MCCIA president in 1965?", "top_k": None, "history": []}]
     assert client.calls["audit"][0]["detail"] is None  # searched as asked: nothing extra to record
 
@@ -47,12 +51,33 @@ def test_the_history_reaches_the_answer_code_as_plain_pairs(client):
     assert "history" not in response.json()  # the history is input only
 
 
-def test_a_restated_follow_up_is_recorded_in_the_audit_log_next_to_what_was_asked(client):
+def test_a_follow_up_made_specific_is_recorded_in_the_audit_log_with_what_was_worked_out(client):
+    client.calls["searched_as"] = "Tell me about Shri S. Mehta, MCCIA president in 1972"
+    client.calls["resolved"] = "who=Shri S. Mehta, MCCIA president in 1972; year=1972"
+    client.post("/chat", json={"query": "Tell me about him", "history": [{"question": "q", "answer": "a"}]}, headers=HEADERS)
+    entry = client.calls["audit"][0]
+    assert entry["query"] == "Tell me about him"  # the audit log keeps the question as it was asked
+    assert entry["detail"] == "searched as: Tell me about Shri S. Mehta, MCCIA president in 1972 | resolved: who=Shri S. Mehta, MCCIA president in 1972; year=1972"
+
+
+def test_a_restated_question_without_resolved_details_is_still_recorded(client):
     client.calls["searched_as"] = "Tell me more about Shri A, MCCIA president in 1965."
     client.post("/chat", json={"query": "Tell me more about him", "history": [{"question": "q", "answer": "a"}]}, headers=HEADERS)
+    assert client.calls["audit"][0]["detail"] == "searched as: Tell me more about Shri A, MCCIA president in 1965."
+
+
+def test_a_question_back_is_marked_so_the_page_does_not_call_it_no_results(client):
+    client.calls["clarify"] = True
+    response = client.post("/chat", json={"query": "Tell me about her", "history": [{"question": "q", "answer": "a"}]}, headers=HEADERS)
+    assert response.status_code == 200
+    assert response.json() == {"answer": "Could you clarify who/what you are referring to?", "sources": [], "found": False, "clarify": True}
+
+
+def test_a_question_back_is_recorded_in_the_audit_log_as_asked_to_clarify(client):
+    client.calls["clarify"] = True
+    client.post("/chat", json={"query": "Tell me about her", "history": [{"question": "q", "answer": "a"}]}, headers=HEADERS)
     entry = client.calls["audit"][0]
-    assert entry["query"] == "Tell me more about him"  # the audit log keeps the question as it was asked
-    assert entry["detail"] == "searched as: Tell me more about Shri A, MCCIA president in 1965."
+    assert (entry["query"], entry["found"], entry["detail"]) == ("Tell me about her", False, "asked to clarify")
 
 
 @pytest.mark.parametrize(

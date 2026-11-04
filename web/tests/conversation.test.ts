@@ -19,12 +19,18 @@ test("a chat's last question and answer pairs are sent, oldest first", () => {
   ]);
 });
 
-test("only the last three pairs are sent", () => {
+test("only the last six pairs are sent", () => {
   const chat: Message[] = [];
-  for (let i = 1; i <= 6; i++) chat.push(ask(`question ${i}`), reply(`answer ${i}`));
+  for (let i = 1; i <= 9; i++) chat.push(ask(`question ${i}`), reply(`answer ${i}`));
   const turns = historyOf(chat);
   assert.equal(turns.length, MAX_HISTORY_TURNS);
-  assert.deepEqual(turns.map((t) => t.question), ["question 4", "question 5", "question 6"]);
+  assert.equal(MAX_HISTORY_TURNS, 6);
+  assert.deepEqual(turns.map((t) => t.question), ["question 4", "question 5", "question 6", "question 7", "question 8", "question 9"]);
+});
+
+test("a question the bot asked back is part of the memory, so the person's reply to it can be understood", () => {
+  const clarifying: Message = { ...reply("Could you clarify who/what you are referring to?", false), clarify: true };
+  assert.deepEqual(historyOf([ask("Tell me about her"), clarifying]), [{ question: "Tell me about her", answer: "Could you clarify who/what you are referring to?" }]);
 });
 
 test("a question that is still waiting for its answer, or has none, adds nothing", () => {
@@ -48,10 +54,11 @@ test("long text is cut, and blank messages are ignored", () => {
   assert.deepEqual(historyOf([ask("   "), reply("an answer")]), []);
 });
 
-test("what a browser sends as history is reduced to at most three well-formed pairs", () => {
+test("what a browser sends as history is reduced to at most six well-formed pairs", () => {
   const sent = [null, 5, "text", { question: "q0" }, { question: "", answer: "a" }, { question: 1, answer: 2 },
-    { question: "q1", answer: "a1", extra: "dropped" }, { question: "q2", answer: "a2" }, { question: "q3", answer: "a3" }, { question: "q4", answer: "a4" }];
-  assert.deepEqual(cleanHistory(sent), [{ question: "q2", answer: "a2" }, { question: "q3", answer: "a3" }, { question: "q4", answer: "a4" }]);
+    { question: "q1", answer: "a1", extra: "dropped" }, { question: "q2", answer: "a2" }, { question: "q3", answer: "a3" }, { question: "q4", answer: "a4" },
+    { question: "q5", answer: "a5" }, { question: "q6", answer: "a6" }, { question: "q7", answer: "a7" }];
+  assert.deepEqual(cleanHistory(sent), [2, 3, 4, 5, 6, 7].map((i) => ({ question: `q${i}`, answer: `a${i}` })));
   assert.deepEqual(cleanHistory("not a list"), []);
   assert.deepEqual(cleanHistory(undefined), []);
   assert.deepEqual(cleanHistory({ question: "q", answer: "a" }), []);

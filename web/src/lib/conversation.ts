@@ -1,5 +1,5 @@
 // The conversation memory sent with each question: the last few question and answer pairs, so a follow-up such as "Tell me more about
-// him" can be understood. Pure (no React, no fetch), so it is tested directly. The backend cuts and checks the same things again.
+// him" or "Compare both" can be understood. Pure (no React, no fetch), so it is tested directly. The backend cuts and checks the same things again.
 // (Not to be confused with history.ts, which saves whole chats in this browser.)
 import type { Message } from "./types";
 
@@ -8,7 +8,9 @@ export interface ChatTurn {
   answer: string;
 }
 
-export const MAX_HISTORY_TURNS = 3;
+// Six pairs: enough for "both" and "that year" to reach back to the people and years asked about earlier in the chat. The backend shows the
+// model that writes the answer only the last three of them.
+export const MAX_HISTORY_TURNS = 6;
 export const MAX_QUESTION_CHARS = 400;
 export const MAX_ANSWER_CHARS = 1200;
 

@@ -1,7 +1,10 @@
 """Generate grounded answers with Gemini from retrieved chunks."""
 
+import json
 import re
+import string
 import time
+from dataclasses import dataclass
 from functools import lru_cache
 
 import httpx
@@ -70,22 +73,63 @@ def searched_in(scope: YearScope) -> str:
     return f"Searched in: {_list_of(scope.issues)} Sampada issues"
 
 
-# Conversation memory: only the last few question and answer pairs are used, and each is cut to a length that keeps the prompt small.
-MAX_HISTORY_TURNS = 3
+# Conversation memory. The browser sends the last few question and answer pairs. The step that works out what a follow-up refers to sees up to
+# MAX_HISTORY_TURNS of them, so "both" and "that year" can reach back; the model that writes the answer sees only the last ANSWER_HISTORY_TURNS.
+MAX_HISTORY_TURNS = 6
+ANSWER_HISTORY_TURNS = 3
 MAX_HISTORY_QUESTION_CHARS = 400
 MAX_HISTORY_ANSWER_CHARS = 1200
+OLDER_ANSWER_CHARS = 500  # every answer but the latest is cut to this when it is shown to the rewriting step
 MAX_STANDALONE_CHARS = 600
+MAX_RESOLVED_CHARS = 90
 
-# Used to turn a follow-up ("Tell me more about him") into a question that can be searched on its own.
-CONDENSE_SYSTEM_PROMPT = (
-    "You rewrite the latest question of a conversation as one complete, standalone question that can be used to search a magazine "
-    "archive. Use the earlier conversation only to fill in what the latest question leaves out, such as who 'he', 'she', 'it' or "
-    "'they' is, or which year or topic it means. Keep the language of the latest question. Do not answer the question, do not add "
-    "facts that the conversation does not state, and do not change what is being asked. If the latest question is already "
-    "complete, return it unchanged. Reply with the question only."
-)
+# What the bot says, word for word, when it cannot tell who or what a question refers to (instead of guessing).
+CLARIFY_ANSWER = "Could you clarify who/what you are referring to?"
+
+# Turns a vague follow-up ("Tell me about him") into one specific question that can be searched on its own. It answers in JSON so that
+# what it worked out (who, which topic, which year) can be written to the audit log and checked.
+CONDENSE_SYSTEM_PROMPT = """You turn the latest message of a conversation about the Sampada magazine archive (MCCIA, Pune, 1945 to 2017) into ONE fully specific, standalone question that a search engine can use without seeing the conversation.
+
+STEP 1 - work out what the message refers to, using the conversation, newest part first:
+- "him", "her", "his", "hers", "he", "she", "they" (one person) = the person the most recent exchange was about: the person its question asked about and its answer names. If that exchange compared several people, the one its answer names last.
+- "it", "that", "this", "the topic" = the topic discussed most recently.
+- "that year", "the same year", "the same period", "then" = the year discussed most recently.
+- "both", "both of them", "the two", "them" (two people or things) = the two most recently discussed people or things, one from each of the last two exchanges about different people or things. Name BOTH.
+- If the previous assistant message asked the user to clarify who or what they mean, the latest message is their reply: combine it with the question that was being clarified.
+
+STEP 2 - write the question so that it is specific:
+- Replace each pronoun with the full name exactly as the conversation gives it, and add the role and the year the conversation gives for that person, for example "Tell me about Shri A. B. Name, MCCIA president in 1972".
+- Add the year or the topic when the message leaves it out and the conversation makes it clear.
+- Keep the language of the latest message (English, Marathi or Hindi) and keep names as they are written.
+- NEVER invent a name, role, year or fact: use only what the conversation states. Do not answer the question.
+- If the message is already specific and complete, return it unchanged.
+
+If you cannot tell who or what the message refers to (nobody or nothing in the conversation fits, or two candidates fit equally well and the message does not choose between them), do NOT guess: set "clarify" to true.
+
+Examples (invented names). Conversation: Q: Who was MCCIA president in 1965? A: Shri P. Rao was MCCIA president in 1965 (1965 issue). Q: Who was president in 1972? A: Shri S. Mehta was MCCIA president in 1972 (1972 issue).
+- "Tell me about him" -> "Tell me about Shri S. Mehta, MCCIA president in 1972"
+- "What was his biggest achievement?" -> "What was Shri S. Mehta's biggest achievement as MCCIA president in 1972?"
+- "Compare both of them" -> "Compare Shri P. Rao (MCCIA president in 1965) and Shri S. Mehta (MCCIA president in 1972)"
+- "What happened that year?" -> "What happened in MCCIA in 1972?"
+- "Who was president in 1980?" -> unchanged, it is already complete
+- "Tell me about her" -> clarify is true, no woman is mentioned
+
+Reply with JSON only, in this shape: {"person": "who the message refers to, in full, or null", "topic": "the topic it refers to, or null", "year": "the year it refers to, or null", "question": "the specific standalone question", "clarify": false}. When "clarify" is true, "question" is the latest message unchanged."""
 
 _API_ERRORS = (genai_errors.APIError, httpx.HTTPError, OSError)
+
+
+@dataclass(frozen=True)
+class Restatement:
+    """A question after the conversation has been used to make it specific.
+
+    `question` is what to search (the question as asked when there was nothing to resolve). `clarify` is True when it could not be
+    worked out who or what the question refers to, so the user is to be asked. `resolved` says what was worked out, for the audit log.
+    """
+
+    question: str
+    clarify: bool = False
+    resolved: str = ""
 
 
 def clean_history(chat_history: list[dict] | None) -> list[dict]:
@@ -102,8 +146,15 @@ def clean_history(chat_history: list[dict] | None) -> list[dict]:
     return pairs[-MAX_HISTORY_TURNS:]
 
 
-def _history_text(history: list[dict]) -> str:
-    return "\n".join(f"Q: {turn['question']}\nA: {turn['answer']}" for turn in history)
+def _history_text(history: list[dict], older_answer_chars: int | None = None) -> str:
+    """The pairs, oldest first. With `older_answer_chars`, every answer but the latest is cut to that length."""
+    lines = []
+    for index, turn in enumerate(history):
+        answer = turn["answer"]
+        if older_answer_chars is not None and index < len(history) - 1:
+            answer = answer[:older_answer_chars]
+        lines.append(f"Q: {turn['question']}\nA: {answer}")
+    return "\n".join(lines)
 
 
 def build_prompt(
@@ -115,10 +166,10 @@ def build_prompt(
 ) -> str:
     """Format the chunks as numbered context blocks, then the earlier conversation (if any), then the question.
 
-    Each block reads "[1] Source: file.pdf, Page 12" and then the chunk text. The conversation is there so the model can tell
-    what a follow-up refers to; it says in so many words that it is not a source. When the question was restated on its own
-    (standalone_query), that is shown too. When it names a year (scope), a last note says the pages come from the issues that cover
-    that year, which can run over two calendar years, so the answer keeps to what the pages state about the year asked.
+    Each block reads "[1] Source: file.pdf, Page 12" and then the chunk text. The last ANSWER_HISTORY_TURNS pairs of the conversation are
+    there so the model can tell what a follow-up refers to; it says in so many words that they are not a source. When the question was
+    restated on its own (standalone_query), that is shown too. When it names a year (scope), a last note says the pages come from the
+    issues that cover that year, which can run over two calendar years, so the answer keeps to what the pages state about the year asked.
     """
     blocks = []
     for number, chunk in enumerate(chunks, start=1):
@@ -127,7 +178,7 @@ def build_prompt(
             source += f", Page {chunk['page_number']}"
         blocks.append(f"[{number}] {source}\n{chunk['content']}")
     prompt = "Context:\n\n" + "\n\n".join(blocks)
-    history = clean_history(chat_history)
+    history = clean_history(chat_history)[-ANSWER_HISTORY_TURNS:]
     if history:
         prompt += (
             "\n\nEarlier in this conversation (only to understand what the question refers to; it is NOT a source, "
@@ -146,25 +197,96 @@ def build_prompt(
     return prompt
 
 
-def condense_question(query: str, chat_history: list[dict] | None) -> str:
-    """The question as a standalone one, using the earlier conversation to resolve "him", "that year" and the like.
+# ---- a question that points at nothing (no conversation to resolve it from) ----------------------------------------------------------
+_PUNCT = string.punctuation + "“”‘’…–—।॥"
+_REFERENCE_WORDS = frozenset(
+    """he him his himself she her hers herself they them their theirs both it its that this those these
+    तो ती ते त्याला त्यांना त्याचे त्यांचे त्याच्याबद्दल त्यांच्याबद्दल त्याने त्यांनी तिचे तिच्याबद्दल दोघे दोघांची दोघांबद्दल
+    वह वे उसके उनके उसे उन्हें उन्होंने दोनों""".split()
+)
+_FILLER_WORDS = frozenset(
+    """tell me about more please give explain describe elaborate compare what who whom whose which how when where why did do does done is are
+    was were be been being the a an of in on at to for from and or also else go on continue
+    सांगा माहिती द्या अधिक आणखी काय कोण कोणी आहे आहेत होते होता होती मध्ये बद्दल
+    बताइए बताओ और अधिक जानकारी क्या कौन बारे में से का की के को पर लिए है हैं""".split()
+)
 
-    Without history the question is returned as it is. If rewriting fails or gives something unusable, so is the question as
-    asked: a follow-up then searches badly, but it is never lost.
+
+def is_dangling(query: str) -> bool:
+    """Whether a question, asked with nothing before it, has no subject of its own: "Tell me about him", "Compare both", "Tell me more".
+
+    True when everything in it is a pointing word ("him", "both", "that") or filler ("tell me", "what", "more"). A question with any
+    other word in it, even one that also says "his", is left to be searched: there may be a subject inside it.
+    """
+    words = [w for w in (raw.strip(_PUNCT) for raw in query.lower().split()) if w]
+    if not words:
+        return False
+    return not [w for w in words if len(w) > 1 and w not in _REFERENCE_WORDS and w not in _FILLER_WORDS]
+
+
+# ---- making a follow-up specific -------------------------------------------------------------------------------------------------------
+def restate_question(query: str, chat_history: list[dict] | None) -> Restatement:
+    """The question made specific with the conversation: who "him" is, what "that" and "that year" mean, who "both" are.
+
+    Without a conversation there is nothing to resolve; a question that points at nothing (is_dangling) is then marked for
+    clarification, anything else is left as asked. With one, the model is asked for JSON (see CONDENSE_SYSTEM_PROMPT); if it cannot
+    tell what the question refers to, it says so and the user is asked rather than a name being guessed. If the rewrite fails or gives
+    something unusable, the question is searched as asked: a follow-up then searches badly, but it is never lost.
     """
     history = clean_history(chat_history)
     if not history:
-        return query
-    prompt = f"Conversation so far:\n{_history_text(history)}\n\nLatest question: {query}\n\nStandalone question:"
+        return Restatement(query, clarify=is_dangling(query))
+    prompt = f"Conversation so far (oldest first):\n{_history_text(history, OLDER_ANSWER_CHARS)}\n\nLatest message: {query}"
     try:
-        rewritten = _generate(prompt, system_instruction=CONDENSE_SYSTEM_PROMPT, max_output_tokens=256)
+        raw = _generate(prompt, system_instruction=CONDENSE_SYSTEM_PROMPT, max_output_tokens=400, temperature=0.0, json_output=True)
     except Exception as exc:  # noqa: BLE001 - a failed rewrite must not fail the question
         print(f"[answer] could not restate the follow-up ({type(exc).__name__}); searching the question as asked")
-        return query
-    rewritten = re.sub(r"^(standalone question|question)\s*:\s*", "", rewritten.strip(), flags=re.IGNORECASE).strip().strip("\"'“”‘’ ")
-    if not rewritten or len(rewritten) > MAX_STANDALONE_CHARS or "\n" in rewritten:
-        return query
-    return rewritten
+        return Restatement(query)
+    return _read_restatement(raw, query)
+
+
+def _read_restatement(raw: str, query: str) -> Restatement:
+    data = _json_object(raw)
+    if data is None:
+        if raw.lstrip().startswith(("{", "[")):  # JSON that cannot be read is not a question
+            return Restatement(query)
+        return Restatement(_usable_question(raw, query))  # a plain one-line question is still usable
+    if data.get("clarify") is True:
+        return Restatement(query, clarify=True, resolved=_resolved(data))
+    question = _usable_question(data.get("question"), query)
+    return Restatement(question, resolved=_resolved(data) if question != query else "")
+
+
+def _json_object(text: str) -> dict | None:
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", (text or "").strip(), flags=re.IGNORECASE)
+    for candidate in (text, (re.search(r"\{.*\}", text, re.DOTALL) or [None])[0]):
+        if candidate:
+            try:
+                value = json.loads(candidate)
+            except ValueError:
+                continue
+            if isinstance(value, dict):
+                return value
+    return None
+
+
+def _usable_question(value: object, fallback: str) -> str:
+    if not isinstance(value, str):
+        return fallback
+    question = re.sub(r"^(standalone question|question)\s*:\s*", "", value.strip(), flags=re.IGNORECASE).strip().strip("\"'“”‘’ ")
+    if not question or len(question) > MAX_STANDALONE_CHARS or "\n" in question:
+        return fallback
+    return question
+
+
+def _resolved(data: dict) -> str:
+    """What the rewrite worked out, as one short line for the audit log: "who=Shri S. Mehta, MCCIA president in 1972; year=1972"."""
+    parts = []
+    for key, label in (("person", "who"), ("topic", "topic"), ("year", "year")):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip() and value.strip().lower() not in ("null", "none", "n/a"):
+            parts.append(f"{label}={value.strip()[:MAX_RESOLVED_CHARS]}")
+    return "; ".join(parts)
 
 
 def generate_answer(
@@ -197,32 +319,44 @@ def generate_answer(
 def rag(query: str, top_k: int | None = None, chat_history: list[dict] | None = None) -> dict:
     """Search for the top_k most relevant chunks (default: search.TOP_K), then answer from them.
 
-    With a conversation, a follow-up is first restated as a standalone question, which is what is searched; the answer is
-    still given to the question as it was asked, with the conversation alongside. The result also carries `search_query`,
-    the text that was searched.
+    With a conversation, a follow-up is first made specific (restate_question: who "him" is, what "that year" means), and that is what
+    is searched; the answer is still given to the question as it was asked, with the conversation alongside. If it cannot be told who
+    or what the question refers to, nothing is searched: the answer is CLARIFY_ANSWER and `clarify` is True. The result also carries
+    `search_query` (the text that was searched, None when the user was asked to clarify) and `resolved` (what was worked out).
 
     A question that names a year is searched in the issues that cover that year only. If nothing is found there the answer says
     so for that year (no_year_answer) and no other year is tried; otherwise the answer ends with the line saying which issues were
     searched (searched_in). A question that names no year is searched across the whole archive, as always.
     """
     history = clean_history(chat_history)
-    search_query = condense_question(query, history) if history else query
+    restated = restate_question(query, history)
+    if restated.clarify:
+        return {"answer": CLARIFY_ANSWER, "sources": [], "found": False, "clarify": True, "search_query": None, "resolved": restated.resolved}
+    search_query = restated.question
     scope = year_scope(search_query)
     chunks = search(search_query, TOP_K if top_k is None else top_k, scope)
     if scope.years and not chunks:
-        return {"answer": no_year_answer(scope.years), "sources": [], "found": False, "search_query": search_query}
+        return {"answer": no_year_answer(scope.years), "sources": [], "found": False, "clarify": False, "search_query": search_query, "resolved": restated.resolved}
     result = generate_answer(query, chunks, history, search_query, scope)
     if scope.years:
         result["answer"] += f"\n\n{searched_in(scope)}"
-    result["search_query"] = search_query
+    result.update({"clarify": False, "search_query": search_query, "resolved": restated.resolved})
     return result
 
 
-def _generate(prompt: str, system_instruction: str = SYSTEM_PROMPT, max_output_tokens: int = MAX_OUTPUT_TOKENS) -> str:
+def _generate(
+    prompt: str,
+    system_instruction: str = SYSTEM_PROMPT,
+    max_output_tokens: int = MAX_OUTPUT_TOKENS,
+    temperature: float | None = None,
+    json_output: bool = False,
+) -> str:
     client = _get_client()
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
         max_output_tokens=max_output_tokens,
+        temperature=temperature,
+        response_mime_type="application/json" if json_output else None,
     )
 
     for attempt, delay in enumerate((*RETRY_DELAYS, None), start=1):

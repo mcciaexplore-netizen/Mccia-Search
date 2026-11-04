@@ -12,6 +12,8 @@ export interface Message {
   content: string;
   sources?: Source[];
   found?: boolean;
+  /** The answer is a question back ("Could you clarify who/what you are referring to?"), not a result. */
+  clarify?: boolean;
   timestamp: Date;
 }
 
@@ -19,6 +21,7 @@ export interface ChatResponse {
   answer: string;
   sources: Source[];
   found: boolean;
+  clarify?: boolean;
 }
 
 export interface Chat {

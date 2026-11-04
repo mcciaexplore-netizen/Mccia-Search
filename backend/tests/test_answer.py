@@ -3,11 +3,16 @@
 No database, no network, no Gemini: the model is replaced by a fake that records what it was asked.
 """
 
+import json
+import re
+
 import pytest
 
 from generation import answer
 from retrieval.search import YearScope
 from generation.answer import (
+    Restatement,
+    CLARIFY_ANSWER,
     CONDENSE_SYSTEM_PROMPT,
     DECLINE_ANSWER,
     NOT_FOUND_ANSWER,
@@ -16,9 +21,10 @@ from generation.answer import (
     no_year_answer,
     build_prompt,
     clean_history,
-    condense_question,
     generate_answer,
+    is_dangling,
     rag,
+    restate_question,
     searched_in,
 )
 
@@ -30,18 +36,24 @@ CHUNKS = [
 HISTORY = [{"question": "Who was MCCIA president in 1965?", "answer": "Shri A, according to the 1965 issue."}]
 
 
+def restated(question="Tell me more about Shri A, MCCIA president in 1965.", clarify=False, person="Shri A, MCCIA president in 1965", year="1965"):
+    """What the rewriting step's model answers: JSON, as CONDENSE_SYSTEM_PROMPT asks."""
+    return json.dumps({"person": person, "topic": None, "year": year, "question": question, "clarify": clarify})
+
+
 class FakeModel:
     """Stands in for answer._generate: records every call and answers from a script (by which system prompt was used)."""
 
-    def __init__(self, main="Shri A (1965 issue).", condensed="Tell me more about Shri A, MCCIA president in 1965."):
-        self.calls, self.main, self.condensed = [], main, condensed
+    def __init__(self, main="Shri A (1965 issue).", condensed=None):
+        self.calls, self.main = [], main
+        self.condensed = restated() if condensed is None else condensed  # a string, an Exception, or a function of the prompt
 
-    def __call__(self, prompt, system_instruction=SYSTEM_PROMPT, max_output_tokens=2048):
-        self.calls.append({"prompt": prompt, "system": system_instruction, "max": max_output_tokens})
+    def __call__(self, prompt, system_instruction=SYSTEM_PROMPT, max_output_tokens=2048, temperature=None, json_output=False):
+        self.calls.append({"prompt": prompt, "system": system_instruction, "max": max_output_tokens, "temperature": temperature, "json": json_output})
         if system_instruction == CONDENSE_SYSTEM_PROMPT:
             if isinstance(self.condensed, Exception):
                 raise self.condensed
-            return self.condensed
+            return self.condensed(prompt) if callable(self.condensed) else self.condensed
         return self.main
 
 
@@ -140,9 +152,9 @@ def test_with_no_chunks_nothing_is_asked_of_the_model(model):
 
 # ---- conversation memory --------------------------------------------------------------------------------------------------------
 
-def test_only_the_last_three_pairs_are_kept_and_long_text_is_cut():
-    pairs = [{"question": f"q{i}", "answer": f"a{i}"} for i in range(6)]
-    assert [p["question"] for p in clean_history(pairs)] == ["q3", "q4", "q5"]
+def test_the_last_six_pairs_are_kept_and_long_text_is_cut():
+    pairs = [{"question": f"q{i}", "answer": f"a{i}"} for i in range(9)]
+    assert [p["question"] for p in clean_history(pairs)] == [f"q{i}" for i in range(3, 9)]
     cut = clean_history([{"question": "q" * 5000, "answer": "a" * 5000}])[0]
     assert (len(cut["question"]), len(cut["answer"])) == (answer.MAX_HISTORY_QUESTION_CHARS, answer.MAX_HISTORY_ANSWER_CHARS)
 
@@ -162,6 +174,12 @@ def test_the_prompt_has_numbered_blocks_then_the_conversation_then_the_question(
     assert prompt.endswith("(The same question, restated on its own: Tell me more about Shri A)")
 
 
+def test_the_model_that_answers_sees_only_the_last_three_pairs():
+    pairs = [{"question": f"question {i}", "answer": f"answer {i}"} for i in range(6)]
+    prompt = build_prompt("And then?", CHUNKS, pairs)
+    assert all(f"question {i}" not in prompt for i in (0, 1, 2)) and all(f"question {i}" in prompt for i in (3, 4, 5))
+
+
 def test_without_a_conversation_the_prompt_is_as_before():
     prompt = build_prompt("Who was president?", CHUNKS)
     assert "Earlier in this conversation" not in prompt and "restated" not in prompt
@@ -172,44 +190,109 @@ def test_a_restatement_equal_to_the_question_is_not_repeated():
     assert "restated" not in build_prompt("Who was president?", CHUNKS, HISTORY, " Who was president? ")
 
 
-# ---- restating a follow-up ------------------------------------------------------------------------------------------------------
+# ---- a question that points at nothing ------------------------------------------------------------------------------------------
 
-def test_without_history_the_question_is_left_alone_and_the_model_is_not_asked(model):
-    assert condense_question("Who was president?", None) == "Who was president?"
-    assert condense_question("Who was president?", []) == "Who was president?"
+@pytest.mark.parametrize(
+    "question",
+    ["Tell me about him", "Tell me about her.", "Compare both", "Compare both of them", "Tell me more", "Go on", "What else did he do?", "Who is he?",
+     "त्यांच्याबद्दल सांगा", "उनके बारे में बताइए"],
+)
+def test_a_question_with_nothing_but_pointing_words_and_filler_has_no_subject(question):
+    assert is_dangling(question)
+
+
+@pytest.mark.parametrize(
+    "question",
+    ["Who was MCCIA president in 1965?", "What is MCCIA?", "MCCIA?", "Tell me about the 1972 president", "What was his biggest achievement?",
+     "How are you?", "Thanks", "Hello", "", "   ", "?"],
+)
+def test_a_question_with_a_word_of_its_own_is_left_to_be_searched(question):
+    assert not is_dangling(question)
+
+
+# ---- making a follow-up specific --------------------------------------------------------------------------------------------------
+
+def test_without_history_a_question_is_left_alone_and_the_model_is_not_asked(model):
+    assert restate_question("Who was president?", None) == Restatement("Who was president?")
+    assert restate_question("Who was president?", []) == Restatement("Who was president?")
     assert model.calls == []
 
 
-def test_a_follow_up_is_restated_using_the_conversation(model):
-    assert condense_question("Tell me more about him", HISTORY) == "Tell me more about Shri A, MCCIA president in 1965."
+def test_without_history_a_question_that_points_at_nothing_is_marked_for_clarification(model):
+    assert restate_question("Tell me about him", None) == Restatement("Tell me about him", clarify=True)
+    assert model.calls == []  # nothing to ask the model about: there is no conversation
+
+
+def test_a_follow_up_is_made_specific_using_the_conversation(model):
+    result = restate_question("Tell me more about him", HISTORY)
+    assert result == Restatement("Tell me more about Shri A, MCCIA president in 1965.", resolved="who=Shri A, MCCIA president in 1965; year=1965")
     call = model.calls[0]
-    assert call["system"] == CONDENSE_SYSTEM_PROMPT
-    assert "Q: Who was MCCIA president in 1965?" in call["prompt"] and "Latest question: Tell me more about him" in call["prompt"]
-    assert call["max"] <= 256
+    assert call["system"] == CONDENSE_SYSTEM_PROMPT and call["json"] is True and call["temperature"] == 0.0
+    assert "Q: Who was MCCIA president in 1965?" in call["prompt"] and "Latest message: Tell me more about him" in call["prompt"]
+    assert call["max"] <= 400
+
+
+def test_the_rewriting_prompt_teaches_who_him_and_that_year_mean_and_when_to_ask():
+    for fragment in [
+        '"him", "her", "his"', "the person the most recent exchange was about", "the one its answer names last",  # who "him" is
+        '"it", "that", "this"', "the topic discussed most recently",  # what "that" is
+        '"that year", "the same year"', "the year discussed most recently",  # which year
+        '"both", "both of them"', "Name BOTH",  # the two people
+        "Replace each pronoun with the full name", "the role and the year the conversation gives",  # be specific
+        "NEVER invent a name", 'do NOT guess: set "clarify" to true',  # never guess
+        "Tell me about Shri S. Mehta, MCCIA president in 1972", "Compare Shri P. Rao (MCCIA president in 1965) and Shri S. Mehta (MCCIA president in 1972)",
+    ]:
+        assert fragment in CONDENSE_SYSTEM_PROMPT, fragment
+
+
+def test_the_rewriting_step_sees_the_whole_conversation_oldest_first_with_older_answers_cut_short(model):
+    pairs = [{"question": f"question {i}", "answer": f"answer {i} " + "x" * 900} for i in range(3)]
+    restate_question("Compare both", pairs)
+    prompt = model.calls[0]["prompt"]
+    assert prompt.index("question 0") < prompt.index("question 1") < prompt.index("question 2") < prompt.index("Latest message: Compare both")
+    assert sorted(len(run) for run in re.findall(r"x+", prompt)) == [491, 491, 900]  # the older two answers are cut to 500 characters; the latest is whole
+
+
+def test_a_question_that_is_already_specific_keeps_an_empty_resolved_line(model):
+    model.condensed = restated(question="Who was president in 1980?", person=None, year="1980")
+    assert restate_question("Who was president in 1980?", HISTORY) == Restatement("Who was president in 1980?")
+
+
+def test_a_json_answer_in_a_code_fence_is_read(model):
+    model.condensed = "```json\n" + restated() + "\n```"
+    assert restate_question("Tell me more about him", HISTORY).question == "Tell me more about Shri A, MCCIA president in 1965."
+
+
+def test_when_the_model_cannot_tell_who_is_meant_the_user_is_asked(model):
+    model.condensed = restated(question="Tell me about her", clarify=True, person=None, year=None)
+    assert restate_question("Tell me about her", HISTORY) == Restatement("Tell me about her", clarify=True)
 
 
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
-        ('"Tell me more about Shri A."', "Tell me more about Shri A."),
+        ('"Tell me more about Shri A."', "Tell me more about Shri A."),  # not JSON: a plain question is still used, tidied
         ("Standalone question: Tell me more about Shri A.", "Tell me more about Shri A."),
         ("Question: 'Tell me more about Shri A.'", "Tell me more about Shri A."),
     ],
 )
-def test_a_restatement_is_tidied(model, raw, expected):
+def test_a_plain_text_answer_is_used_as_the_question(model, raw, expected):
     model.condensed = raw
-    assert condense_question("Tell me more about him", HISTORY) == expected
+    assert restate_question("Tell me more about him", HISTORY) == Restatement(expected)
 
 
-@pytest.mark.parametrize("bad", ["", "   ", "line one\nline two", "x" * 700])
-def test_an_unusable_restatement_falls_back_to_the_question(model, bad):
+@pytest.mark.parametrize(
+    "bad",
+    ["", "   ", "line one\nline two", "x" * 700, "{}", '{"question": ""}', '{"question": 5}', '{"question": "a\\nb"}', "[1, 2]", '{"question": "' + "x" * 700 + '"}'],
+)
+def test_an_unusable_rewrite_falls_back_to_the_question_as_asked(model, bad):
     model.condensed = bad
-    assert condense_question("Tell me more about him", HISTORY) == "Tell me more about him"
+    assert restate_question("Tell me more about him", HISTORY) == Restatement("Tell me more about him")
 
 
-def test_a_failed_restatement_never_loses_the_question(model, capsys):
+def test_a_failed_rewrite_never_loses_the_question_and_never_asks_for_clarification(model, capsys):
     model.condensed = RuntimeError("Gemini is down")
-    assert condense_question("Tell me more about him", HISTORY) == "Tell me more about him"
+    assert restate_question("Tell me more about him", HISTORY) == Restatement("Tell me more about him")
     assert "searching the question as asked" in capsys.readouterr().out
 
 
@@ -221,10 +304,10 @@ def test_a_question_without_history_is_searched_as_asked(model, monkeypatch):
     result = rag("Who was MCCIA president in 1965?")
     assert searched == [("Who was MCCIA president in 1965?", answer.TOP_K)]
     assert [c["system"] for c in model.calls] == [SYSTEM_PROMPT]  # one call: the answer
-    assert result["search_query"] == "Who was MCCIA president in 1965?" and result["found"] is True
+    assert (result["search_query"], result["clarify"], result["found"]) == ("Who was MCCIA president in 1965?", False, True)
 
 
-def test_a_follow_up_is_searched_restated_and_answered_with_the_conversation(model, monkeypatch):
+def test_a_follow_up_is_searched_specific_and_answered_with_the_conversation(model, monkeypatch):
     searched = []
     monkeypatch.setattr(answer, "search", lambda q, k, scope=None: searched.append(q) or CHUNKS)
     result = rag("Tell me more about him", None, HISTORY)
@@ -234,21 +317,73 @@ def test_a_follow_up_is_searched_restated_and_answered_with_the_conversation(mod
     assert "Question: Tell me more about him" in final["prompt"] and "restated on its own: Tell me more about Shri A" in final["prompt"]
     assert "Q: Who was MCCIA president in 1965?" in final["prompt"]
     assert result["search_query"] == "Tell me more about Shri A, MCCIA president in 1965."
+    assert result["resolved"] == "who=Shri A, MCCIA president in 1965; year=1965" and result["clarify"] is False
 
 
-def test_history_is_trimmed_before_it_reaches_the_model(model, monkeypatch):
+def test_when_it_cannot_be_told_who_is_meant_the_user_is_asked_and_nothing_is_searched(model, monkeypatch):
+    model.condensed = restated(question="Tell me about her", clarify=True, person=None, year=None)
+    monkeypatch.setattr(answer, "search", lambda *a, **k: pytest.fail("a question that cannot be understood must not be searched"))
+    result = rag("Tell me about her", None, HISTORY)
+    assert result["answer"] == "Could you clarify who/what you are referring to?" == CLARIFY_ANSWER
+    assert (result["found"], result["clarify"], result["sources"], result["search_query"]) == (False, True, [], None)
+    assert [c["system"] for c in model.calls] == [CONDENSE_SYSTEM_PROMPT]  # only the rewrite was asked; no answer was made up
+
+
+def test_a_first_question_that_points_at_nothing_is_asked_about_without_calling_the_model(model, monkeypatch):
+    monkeypatch.setattr(answer, "search", lambda *a, **k: pytest.fail("not searched"))
+    result = rag("Tell me about him")
+    assert result["answer"] == CLARIFY_ANSWER and result["clarify"] is True and result["found"] is False
+    assert model.calls == []
+
+
+def test_the_rewriting_step_looks_back_six_pairs_and_the_answering_step_three(model, monkeypatch):
     monkeypatch.setattr(answer, "search", lambda q, k, scope=None: CHUNKS)
     rag("And then?", None, [{"question": f"old question {i}", "answer": f"old answer {i}"} for i in range(8)])
-    prompt = model.calls[0]["prompt"]
-    assert "old question 4" not in prompt and all(f"old question {i}" in prompt for i in (5, 6, 7))
+    rewrite_prompt, answer_prompt = model.calls[0]["prompt"], model.calls[1]["prompt"]
+    assert "old question 1" not in rewrite_prompt and all(f"old question {i}" in rewrite_prompt for i in range(2, 8))
+    assert "old question 4" not in answer_prompt and all(f"old question {i}" in answer_prompt for i in (5, 6, 7))
 
 
-def test_a_follow_up_when_the_restatement_fails_is_still_answered(model, monkeypatch):
+def test_a_follow_up_when_the_rewrite_fails_is_still_answered(model, monkeypatch):
     model.condensed = RuntimeError("down")
     searched = []
     monkeypatch.setattr(answer, "search", lambda q, k, scope=None: searched.append(q) or CHUNKS)
     result = rag("Tell me more about him", None, HISTORY)
     assert searched == ["Tell me more about him"] and result["found"] is True
+
+
+def test_the_five_step_conversation_each_step_sees_everything_said_before_it(model, monkeypatch):
+    """Q1 and Q2 ask about two presidents; Q3 to Q5 point back at them. Here the model is scripted (see the real-model run for the
+    wording it really produces), so this checks what each step is given and what is searched, the way the web app sends it."""
+    script = {
+        "Who was president in 1972?": "Who was president in 1972?",  # already specific: the rewriting step hands it back as it is
+        "Tell me about him": "Tell me about Shri S. Mehta, MCCIA president in 1972",
+        "Compare both of them": "Compare Shri P. Rao (MCCIA president in 1965) and Shri S. Mehta (MCCIA president in 1972)",
+        "What was his biggest achievement?": "What was Shri S. Mehta's biggest achievement as MCCIA president in 1972?",
+    }
+
+    def scripted(prompt):
+        latest = prompt.split("Latest message: ")[-1]
+        return restated(question=script[latest], person="Shri S. Mehta, MCCIA president in 1972", year="1972")
+
+    model.condensed = scripted
+    searched = []
+    monkeypatch.setattr(answer, "search", lambda q, k, scope=None: searched.append(q) or CHUNKS)
+    history = []
+    asked = ["Who was MCCIA president in 1965?", "Who was president in 1972?", "Tell me about him", "Compare both of them", "What was his biggest achievement?"]
+    for number, question in enumerate(asked, start=1):
+        model.main = f"Answer {number}."
+        result = rag(question, None, history[-6:])
+        history.append({"question": question, "answer": result["answer"]})
+        if number == 1:  # nothing before it: searched as asked, the rewriting step is not used
+            assert searched[-1] == question and result["resolved"] == "" and not any(c["system"] == CONDENSE_SYSTEM_PROMPT for c in model.calls)
+            continue
+        rewrite_prompt = [c for c in model.calls if c["system"] == CONDENSE_SYSTEM_PROMPT][-1]["prompt"]
+        for earlier in asked[: number - 1]:  # every earlier question reached the rewriting step, in order
+            assert f"Q: {earlier}\n" in rewrite_prompt
+        assert rewrite_prompt.endswith(f"Latest message: {question}")
+        assert searched[-1] == script[question]
+    assert searched == ["Who was MCCIA president in 1965?", *script.values()]
 
 
 # ---- a year in the question -----------------------------------------------------------------------------------------------------
