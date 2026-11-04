@@ -59,6 +59,11 @@ LOCAL_EMBEDDING_MODEL = (
 API_KEY = (os.environ.get("API_KEY") or "").strip()
 ADMIN_API_KEY = (os.environ.get("ADMIN_API_KEY") or "").strip()
 
+# Keep-warm pings (keepwarm.py): the web addresses this backend sends a cheap GET to every few minutes, so the web app's sign-in
+# function is not cold when someone opens the app. Comma-separated; "off" turns it off (set that when running the backend on a laptop).
+KEEP_WARM_URLS = (os.environ.get("KEEP_WARM_URLS") or "").strip() or "https://mccia-search.vercel.app/api/sso/callback"
+KEEP_WARM_INTERVAL_SECONDS = 240  # a function idles out within minutes; not configurable, so a typo cannot turn this into a flood
+
 
 def validate_config() -> None:
     """Raise ValueError naming every required variable that is not set."""

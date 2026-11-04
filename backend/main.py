@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 
 import audit
 import auth
+import keepwarm
 import pages
 import sso
 from config import validate_config
@@ -50,7 +51,9 @@ async def lifespan(app: FastAPI):
     get_pool()  # warm up the pool on startup
     print("[startup] database pool ready")
     print("[startup] mccia-search ready")
+    keepwarm.start()  # a cheap GET to the web app every few minutes, so its sign-in function is not cold
     yield
+    keepwarm.stop()
     close_pool()
 
 
