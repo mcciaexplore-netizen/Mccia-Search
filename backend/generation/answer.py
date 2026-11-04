@@ -10,7 +10,7 @@ from google.genai import errors as genai_errors
 from google.genai import types
 
 from config import GEMINI_API_KEY, GEMINI_CHAT_MODEL
-from retrieval.search import TOP_K, search
+from retrieval.search import TOP_K, YearScope, search, year_scope
 
 GENERATION_MODEL = GEMINI_CHAT_MODEL
 MAX_CONTEXT_CHUNKS = TOP_K
@@ -48,6 +48,28 @@ NOT_FOUND_ANSWER = (
     "Try asking in Marathi for better results on historical content."
 )
 
+# A question that names a year is answered from the issues that cover that year and nothing else. When there is nothing to find there, it
+# says so for that year, and does not go looking in other years.
+ARCHIVE_YEARS = "1945-2017"
+NO_YEAR_ANSWER = "No information found for {years} in the Sampada archive. Available years are " + ARCHIVE_YEARS + "."
+
+
+def _list_of(items) -> str:
+    """"a", "a and b", "a, b and c"."""
+    items = [str(item) for item in items]
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def no_year_answer(years) -> str:
+    """The answer when a question names a year and the issues that cover it hold nothing for it."""
+    return NO_YEAR_ANSWER.format(years=_list_of(years))
+
+
+def searched_in(scope: YearScope) -> str:
+    """The line that tells which issues a year question was searched in, e.g. "Searched in: 1964-65 and 1965-66 Sampada issues"."""
+    return f"Searched in: {_list_of(scope.issues)} Sampada issues"
+
+
 # Conversation memory: only the last few question and answer pairs are used, and each is cut to a length that keeps the prompt small.
 MAX_HISTORY_TURNS = 3
 MAX_HISTORY_QUESTION_CHARS = 400
@@ -84,12 +106,19 @@ def _history_text(history: list[dict]) -> str:
     return "\n".join(f"Q: {turn['question']}\nA: {turn['answer']}" for turn in history)
 
 
-def build_prompt(query: str, chunks: list[dict], chat_history: list[dict] | None = None, standalone_query: str | None = None) -> str:
+def build_prompt(
+    query: str,
+    chunks: list[dict],
+    chat_history: list[dict] | None = None,
+    standalone_query: str | None = None,
+    scope: YearScope | None = None,
+) -> str:
     """Format the chunks as numbered context blocks, then the earlier conversation (if any), then the question.
 
     Each block reads "[1] Source: file.pdf, Page 12" and then the chunk text. The conversation is there so the model can tell
     what a follow-up refers to; it says in so many words that it is not a source. When the question was restated on its own
-    (standalone_query), that is shown too.
+    (standalone_query), that is shown too. When it names a year (scope), a last note says the pages come from the issues that cover
+    that year, which can run over two calendar years, so the answer keeps to what the pages state about the year asked.
     """
     blocks = []
     for number, chunk in enumerate(chunks, start=1):
@@ -107,6 +136,13 @@ def build_prompt(query: str, chunks: list[dict], chat_history: list[dict] | None
     prompt += f"\n\nQuestion: {query}"
     if standalone_query and standalone_query.strip() != query.strip():
         prompt += f"\n(The same question, restated on its own: {standalone_query.strip()})"
+    if scope is not None and scope.years:
+        years = _list_of(scope.years)
+        prompt += (
+            f"\n(The question is about {years}. The pages above come from the issues that cover it ({_list_of(scope.issues)}). An issue can run "
+            f"over two calendar years, so a page may describe the year before or after: use only what the pages state about {years}, and "
+            "if they show a different year, say so.)"
+        )
     return prompt
 
 
@@ -132,7 +168,11 @@ def condense_question(query: str, chat_history: list[dict] | None) -> str:
 
 
 def generate_answer(
-    query: str, chunks: list[dict], chat_history: list[dict] | None = None, standalone_query: str | None = None
+    query: str,
+    chunks: list[dict],
+    chat_history: list[dict] | None = None,
+    standalone_query: str | None = None,
+    scope: YearScope | None = None,
 ) -> dict:
     """Answer the query from the chunks (best first) with Gemini.
 
@@ -140,7 +180,7 @@ def generate_answer(
     from, so a fixed "not found" message is returned without calling Gemini. When Gemini
     says the chunks do not hold the answer (DECLINE_ANSWER), found is False and there are
     no sources. At most MAX_CONTEXT_CHUNKS chunks are used, for the prompt and for the sources.
-    `chat_history` (the last few {"question", "answer"} pairs) lets a follow-up be understood.
+    `chat_history` (the last few {"question", "answer"} pairs) lets a follow-up be understood; `scope` is the year the question names.
     Transient Gemini errors are retried after 2s, 4s and 8s; a RuntimeError is
     raised if the answer still cannot be generated.
     """
@@ -148,7 +188,7 @@ def generate_answer(
         return {"answer": NOT_FOUND_ANSWER, "sources": [], "found": False}
 
     used = chunks[:MAX_CONTEXT_CHUNKS]
-    answer = _generate(build_prompt(query, used, chat_history, standalone_query))
+    answer = _generate(build_prompt(query, used, chat_history, standalone_query, scope))
     if _is_decline(answer):  # the pages it was given do not answer it, so none are shown
         return {"answer": DECLINE_ANSWER, "sources": [], "found": False}
     return {"answer": answer, "sources": _build_sources(used), "found": True}
@@ -160,11 +200,20 @@ def rag(query: str, top_k: int | None = None, chat_history: list[dict] | None = 
     With a conversation, a follow-up is first restated as a standalone question, which is what is searched; the answer is
     still given to the question as it was asked, with the conversation alongside. The result also carries `search_query`,
     the text that was searched.
+
+    A question that names a year is searched in the issues that cover that year only. If nothing is found there the answer says
+    so for that year (no_year_answer) and no other year is tried; otherwise the answer ends with the line saying which issues were
+    searched (searched_in). A question that names no year is searched across the whole archive, as always.
     """
     history = clean_history(chat_history)
     search_query = condense_question(query, history) if history else query
-    chunks = search(search_query, TOP_K if top_k is None else top_k)
-    result = generate_answer(query, chunks, history, search_query)
+    scope = year_scope(search_query)
+    chunks = search(search_query, TOP_K if top_k is None else top_k, scope)
+    if scope.years and not chunks:
+        return {"answer": no_year_answer(scope.years), "sources": [], "found": False, "search_query": search_query}
+    result = generate_answer(query, chunks, history, search_query, scope)
+    if scope.years:
+        result["answer"] += f"\n\n{searched_in(scope)}"
     result["search_query"] = search_query
     return result
 

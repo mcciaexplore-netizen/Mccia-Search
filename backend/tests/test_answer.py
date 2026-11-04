@@ -6,17 +6,20 @@ No database, no network, no Gemini: the model is replaced by a fake that records
 import pytest
 
 from generation import answer
+from retrieval.search import YearScope
 from generation.answer import (
     CONDENSE_SYSTEM_PROMPT,
     DECLINE_ANSWER,
     NOT_FOUND_ANSWER,
     SYSTEM_PROMPT,
     _is_decline,
+    no_year_answer,
     build_prompt,
     clean_history,
     condense_question,
     generate_answer,
     rag,
+    searched_in,
 )
 
 CHUNKS = [
@@ -40,6 +43,12 @@ class FakeModel:
                 raise self.condensed
             return self.condensed
         return self.main
+
+
+@pytest.fixture(autouse=True)
+def no_year(monkeypatch):
+    """By default a question names no year, and no database is asked which issues cover one."""
+    monkeypatch.setattr(answer, "year_scope", lambda query: YearScope())
 
 
 @pytest.fixture
@@ -208,7 +217,7 @@ def test_a_failed_restatement_never_loses_the_question(model, capsys):
 
 def test_a_question_without_history_is_searched_as_asked(model, monkeypatch):
     searched = []
-    monkeypatch.setattr(answer, "search", lambda q, k: searched.append((q, k)) or CHUNKS)
+    monkeypatch.setattr(answer, "search", lambda q, k, scope=None: searched.append((q, k)) or CHUNKS)
     result = rag("Who was MCCIA president in 1965?")
     assert searched == [("Who was MCCIA president in 1965?", answer.TOP_K)]
     assert [c["system"] for c in model.calls] == [SYSTEM_PROMPT]  # one call: the answer
@@ -217,7 +226,7 @@ def test_a_question_without_history_is_searched_as_asked(model, monkeypatch):
 
 def test_a_follow_up_is_searched_restated_and_answered_with_the_conversation(model, monkeypatch):
     searched = []
-    monkeypatch.setattr(answer, "search", lambda q, k: searched.append(q) or CHUNKS)
+    monkeypatch.setattr(answer, "search", lambda q, k, scope=None: searched.append(q) or CHUNKS)
     result = rag("Tell me more about him", None, HISTORY)
     assert searched == ["Tell me more about Shri A, MCCIA president in 1965."]  # the year and the person are back in the search
     final = model.calls[-1]
@@ -228,7 +237,7 @@ def test_a_follow_up_is_searched_restated_and_answered_with_the_conversation(mod
 
 
 def test_history_is_trimmed_before_it_reaches_the_model(model, monkeypatch):
-    monkeypatch.setattr(answer, "search", lambda q, k: CHUNKS)
+    monkeypatch.setattr(answer, "search", lambda q, k, scope=None: CHUNKS)
     rag("And then?", None, [{"question": f"old question {i}", "answer": f"old answer {i}"} for i in range(8)])
     prompt = model.calls[0]["prompt"]
     assert "old question 4" not in prompt and all(f"old question {i}" in prompt for i in (5, 6, 7))
@@ -237,6 +246,86 @@ def test_history_is_trimmed_before_it_reaches_the_model(model, monkeypatch):
 def test_a_follow_up_when_the_restatement_fails_is_still_answered(model, monkeypatch):
     model.condensed = RuntimeError("down")
     searched = []
-    monkeypatch.setattr(answer, "search", lambda q, k: searched.append(q) or CHUNKS)
+    monkeypatch.setattr(answer, "search", lambda q, k, scope=None: searched.append(q) or CHUNKS)
     result = rag("Tell me more about him", None, HISTORY)
     assert searched == ["Tell me more about him"] and result["found"] is True
+
+
+# ---- a year in the question -----------------------------------------------------------------------------------------------------
+
+SCOPE_1965 = YearScope((1965,), (11, 12), ("1964-65", "1965-66"))
+
+
+def test_the_no_information_message_names_the_year_and_the_archive_years_exactly():
+    assert no_year_answer([1965]) == "No information found for 1965 in the Sampada archive. Available years are 1945-2017."
+    assert no_year_answer([1965, 1972]) == "No information found for 1965 and 1972 in the Sampada archive. Available years are 1945-2017."
+    assert no_year_answer([1965, 1972, 1980]) == "No information found for 1965, 1972 and 1980 in the Sampada archive. Available years are 1945-2017."
+
+
+def test_the_searched_in_line_names_the_issues():
+    assert searched_in(SCOPE_1965) == "Searched in: 1964-65 and 1965-66 Sampada issues"
+    assert searched_in(YearScope((1965,), (12,), ("1965-66",))) == "Searched in: 1965-66 Sampada issues"
+    assert searched_in(YearScope((1965, 1972), (1, 2, 3), ("1964-65", "1965-66", "1972-73"))) == "Searched in: 1964-65, 1965-66 and 1972-73 Sampada issues"
+
+
+def test_a_year_with_nothing_found_says_so_for_that_year_and_does_not_look_elsewhere(model, monkeypatch):
+    searched = []
+    monkeypatch.setattr(answer, "year_scope", lambda q: SCOPE_1965)
+    monkeypatch.setattr(answer, "search", lambda q, k, scope=None: searched.append((q, scope)) or [])
+    result = rag("What happened in MCCIA in 1965?")
+    assert result["answer"] == "No information found for 1965 in the Sampada archive. Available years are 1945-2017."
+    assert (result["found"], result["sources"]) == (False, [])
+    assert searched == [("What happened in MCCIA in 1965?", SCOPE_1965)]  # one search, limited to that year's issues: no second, wider one
+    assert model.calls == []  # nothing to answer from, so the model is not asked
+
+
+def test_a_year_nobody_covers_gets_the_same_message(model, monkeypatch):
+    monkeypatch.setattr(answer, "year_scope", lambda q: YearScope((2010,), (), ()))
+    monkeypatch.setattr(answer, "search", lambda q, k, scope=None: [])
+    assert rag("What happened in 2010?")["answer"].startswith("No information found for 2010 in the Sampada archive.")
+
+
+def test_an_answer_for_a_year_says_which_issues_were_searched(model, monkeypatch):
+    monkeypatch.setattr(answer, "year_scope", lambda q: SCOPE_1965)
+    monkeypatch.setattr(answer, "search", lambda q, k, scope=None: CHUNKS)
+    result = rag("What happened in MCCIA in 1965?")
+    assert result["answer"] == "Shri A (1965 issue).\n\nSearched in: 1964-65 and 1965-66 Sampada issues"
+    assert result["found"] is True and result["sources"]
+
+
+def test_the_model_is_told_the_year_and_that_an_issue_can_run_over_two_years(model, monkeypatch):
+    monkeypatch.setattr(answer, "year_scope", lambda q: SCOPE_1965)
+    monkeypatch.setattr(answer, "search", lambda q, k, scope=None: CHUNKS)
+    rag("What happened in MCCIA in 1965?")
+    prompt = model.calls[-1]["prompt"]
+    assert "The question is about 1965." in prompt and "(1964-65 and 1965-66)" in prompt
+    assert "use only what the pages state about 1965" in prompt
+    assert model.calls[-1]["system"] == SYSTEM_PROMPT  # the system prompt itself is not touched
+
+
+def test_a_declined_year_question_still_says_where_it_looked(model, monkeypatch):
+    model.main = DECLINE_ANSWER
+    monkeypatch.setattr(answer, "year_scope", lambda q: SCOPE_1965)
+    monkeypatch.setattr(answer, "search", lambda q, k, scope=None: CHUNKS)
+    result = rag("Who won the cricket match in 1965?")
+    assert result["answer"] == DECLINE_ANSWER + "\n\nSearched in: 1964-65 and 1965-66 Sampada issues"
+    assert (result["found"], result["sources"]) == (False, [])
+
+
+def test_a_question_with_no_year_is_searched_everywhere_and_adds_nothing(model, monkeypatch):
+    scopes = []
+    monkeypatch.setattr(answer, "search", lambda q, k, scope=None: scopes.append(scope) or CHUNKS)
+    result = rag("What is MCCIA?")
+    assert scopes == [YearScope()] and scopes[0].document_ids is None  # no limit
+    assert "Searched in" not in result["answer"]
+    prompt = model.calls[-1]["prompt"]
+    assert "The question is about" not in prompt and "calendar years" not in prompt
+
+
+def test_a_follow_up_names_the_year_the_restated_question_carries(model, monkeypatch):
+    asked = []
+    monkeypatch.setattr(answer, "year_scope", lambda q: asked.append(q) or SCOPE_1965)
+    monkeypatch.setattr(answer, "search", lambda q, k, scope=None: CHUNKS)
+    result = rag("Tell me more about him", None, HISTORY)
+    assert asked == ["Tell me more about Shri A, MCCIA president in 1965."]  # the year comes from the restated question
+    assert result["answer"].endswith("Searched in: 1964-65 and 1965-66 Sampada issues")

@@ -4,6 +4,7 @@ import math
 import re
 import string
 import time
+from dataclasses import dataclass
 from functools import lru_cache
 
 import httpx
@@ -187,19 +188,61 @@ def keyword_terms(query: str) -> list[str]:
     return list(dict.fromkeys(terms))[:MAX_KEYWORDS]
 
 
-def documents_for_years(years: list[int]) -> list[int]:
-    """The ids of the documents whose issues cover any of the years."""
+def volume_label(filename: str) -> str | None:
+    """How an issue's years read in the answer: "1964-65" for a volume that runs over two years, "1945" for one year.
+
+    "1964-July To1965-June Part-1.pdf" is "1964-65"; "1945 July.PDF" is "1945"; "1999-Jan To 2000-Dec.pdf" is "1999-2000".
+    None when the file name holds no year.
+    """
+    span = volume_years(filename)
+    if span is None:
+        return None
+    first, last = span
+    if first == last:
+        return str(first)
+    return f"{first}-{str(last)[2:]}" if last - first == 1 and first // 100 == last // 100 else f"{first}-{last}"
+
+
+@dataclass(frozen=True)
+class YearScope:
+    """Which part of the archive a question is limited to.
+
+    `years` are the years the question names (none: nothing is limited). `document_ids` are the issues that cover any of them
+    (None when no year is named; an empty tuple when no issue covers the year, so there is nothing to search). `issues` are those
+    issues' years as they read in an answer, oldest first, each once ("1964-65", "1965-66").
+    """
+
+    years: tuple[int, ...] = ()
+    document_ids: tuple[int, ...] | None = None
+    issues: tuple[str, ...] = ()
+
+
+def year_scope(query: str) -> YearScope:
+    """The years the question names and the issues that cover them: a year limits the search to those issues alone.
+
+    An issue covers a year when the years in its file name run from before it to after it (or are it): "1964-July To1965-June" and
+    "1965-July To1966-June" both cover 1965, "1963-April To1964-March" does not. No year in the question: no limit.
+    """
+    years = years_in(query)
+    if not years:
+        return YearScope()
     with get_pooled_connection() as conn:
         documents = conn.execute("SELECT id, filename FROM documents").fetchall()
-    ids = []
+    ids, spans = [], {}
     for document_id, filename in documents:
         span = volume_years(filename)
         if span and any(span[0] <= year <= span[1] for year in years):
             ids.append(document_id)
-    return ids
+            spans[volume_label(filename)] = span
+    return YearScope(tuple(years), tuple(ids), tuple(sorted(spans, key=lambda label: (spans[label], label))))
 
 
-def search(query: str, top_k: int = TOP_K) -> list[dict]:
+def documents_for_years(years: list[int]) -> list[int]:
+    """The ids of the documents whose issues cover any of the years."""
+    return list(year_scope(" ".join(map(str, years))).document_ids or ())
+
+
+def search(query: str, top_k: int = TOP_K, scope: YearScope | None = None) -> list[dict]:
     """Return the chunks that best answer the query, best first (hybrid: meaning plus keywords).
 
     Each result is {chunk_id, content, page_number, chunk_index, filename, drive_file_id, document_id,
@@ -207,7 +250,8 @@ def search(query: str, top_k: int = TOP_K) -> list[dict]:
     the engine's min_similarity() (0.45 for Gemini, 0.40 for bge-m3): a chunk below it is never returned. `keyword_score` is
     the share (0..1) of the question's words the chunk contains (PostgreSQL full-text search), and the results are ordered by
     `score` = VECTOR_WEIGHT * similarity + KEYWORD_WEIGHT * keyword_score, among the CANDIDATES most similar chunks. When the
-    query names a year (such as 1965), only chunks of the issues that cover that year are searched.
+    query names a year (such as 1965), only chunks of the issues that cover that year are searched, and never any other year's:
+    there is no fallback to the rest of the archive. `scope` is that limit when the caller has already worked it out (year_scope).
     Returns an empty list when nothing is similar enough, no issue covers the year, or the query is blank.
     """
     if top_k < 1:
@@ -216,19 +260,18 @@ def search(query: str, top_k: int = TOP_K) -> list[dict]:
     results: list[dict] = []
     if query.strip():
         ensure_matches_database()  # the query must come from the model behind the stored vectors
-        years = years_in(query)
-        document_ids = documents_for_years(years) if years else None
-        if years:
-            print(f"[search] year filter {years}: {len(document_ids)} matching document(s)")
-        if document_ids != []:  # a year that no issue covers has nothing to search
+        scope = scope or year_scope(query)
+        if scope.years:
+            print(f"[search] year filter {list(scope.years)}: {len(scope.document_ids)} matching document(s)")
+        if scope.document_ids is None or scope.document_ids:  # a year that no issue covers has nothing to search
             params = {
                 "query": Vector(embed_query(query)).to_text(),
                 "min_similarity": min_similarity(),  # per engine: each model scores differently
                 "candidates": max(CANDIDATES, top_k),
                 "terms": keyword_terms(query),
             }
-            if document_ids is not None:
-                params["document_ids"] = document_ids
+            if scope.document_ids is not None:
+                params["document_ids"] = list(scope.document_ids)
             results = rank(_run_search(params), top_k)
 
     top = f"{results[0]['similarity']:.2f}" if results else "n/a"
