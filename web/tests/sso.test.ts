@@ -38,6 +38,14 @@ test("a valid token signs the person in with the right name, email and role", as
   assert.deepEqual({ id: c.id, email: c.email, name: c.name, role: c.role, jti: c.jti }, { id: "hub-user-1", email: "anita@mccia.test", name: "Anita Kulkarni", role: "user", jti: "jti-0000000001" });
   assert.equal((await verify(await token({ role: "admin" }))).role, "admin");
 });
+test("the hub's staff role signs in as an ordinary user, with no extra rights", async () => {
+  const c = await verify(await token({ role: "staff" }));
+  assert.equal(c.role, "user");
+  assert.equal(c.email, "anita@mccia.test");
+});
+test("only the roles the hub issues are accepted: anything else, in any case, is refused", async () => {
+  for (const role of ["root", "Admin", "STAFF", "superadmin", "", 1, null, ["admin"], { role: "admin" }]) await rejects(verify(await token({ role })), "invalid");
+});
 test("an expired token is rejected (as expired)", async () => rejects(verify(await token(), { now: new Date(NOW.getTime() + 66_000) }), "expired"));
 test("a token a few seconds past expiry is still accepted (clock tolerance)", async () => assert.ok(await verify(await token(), { now: new Date(NOW.getTime() + 63_000) })));
 test("a wrong audience is rejected", async () => rejects(verify(await token({ aud: "some-other-app" })), "invalid"));

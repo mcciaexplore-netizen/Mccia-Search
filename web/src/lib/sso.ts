@@ -10,6 +10,12 @@ import { jwtVerify } from "jose/jwt/verify";
 export const ISSUER = "mccia-app-hub";
 export const ROLES = ["user", "admin"] as const;
 export type Role = (typeof ROLES)[number];
+/**
+ * The role this app gives a person, from the role in the hub's token: "admin" stays admin; "user" and "staff" are both an ordinary user here
+ * (the hub's App Staff have no extra rights in this app); anything else is not a role the hub issues, so the token is refused.
+ */
+const roleOf = (v: unknown): Role | null => (v === "admin" ? "admin" : v === "user" || v === "staff" ? "user" : null);
+
 /** `hubUrl`: where the hub lives (the token's hub_url), for the sidebar's "‹ App Hub" link; absent when the hub did not send one. */
 export type HubUser = { id: string; email: string; name: string; role: Role; hubUrl?: string };
 export type HubClaims = HubUser & { jti: string; iat: number; exp: number };
@@ -81,10 +87,11 @@ export async function verifyHubToken(
   if (!isText(sub, 100) || !isText(email, 254) || !isText(name, 200) || !isText(jti, 100)) {
     throw new SsoError("invalid", "The sign-in token is missing information.");
   }
-  if (!ROLES.includes(role as Role)) throw new SsoError("invalid", "The sign-in token has an unknown role.");
+  const appRole = roleOf(role);
+  if (!appRole) throw new SsoError("invalid", "The sign-in token has an unknown role.");
   if (typeof iat !== "number" || typeof exp !== "number") throw new SsoError("invalid", "The sign-in token has no times.");
   if (exp - iat > MAX_LIFETIME_SECONDS) throw new SsoError("invalid", "The sign-in token lives too long.");
   if (iat > now.getTime() / 1000 + CLOCK_TOLERANCE_SECONDS * 6) throw new SsoError("invalid", "The sign-in token is from the future.");
   const hubUrl = hubUrlOf(payload.hub_url);
-  return { id: sub, email, name, role: role as Role, ...(hubUrl ? { hubUrl } : {}), jti, iat, exp };
+  return { id: sub, email, name, role: appRole, ...(hubUrl ? { hubUrl } : {}), jti, iat, exp };
 }
