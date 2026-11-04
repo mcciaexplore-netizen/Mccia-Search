@@ -1,3 +1,4 @@
+import type { ChatTurn } from "./conversation";
 import type { AuditResponse, ChatResponse, DocumentsResponse } from "./types";
 
 // Every call goes to this app's own /api routes (src/app/api), which forward it to
@@ -18,15 +19,17 @@ async function failWith(res: Response): Promise<never> {
   throw new Error(err.detail ?? `Server error ${res.status}`);
 }
 
+/** Ask a question. `history` is the last few question and answer pairs of this chat (see conversation.ts), so a follow-up is understood. */
 export async function sendChat(
   query: string,
+  history: ChatTurn[] = [],
   top_k?: number
 ): Promise<ChatResponse> {
   const res = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    // top_k is left out unless given, so the backend's default applies.
-    body: JSON.stringify(top_k === undefined ? { query } : { query, top_k }),
+    // history and top_k are left out unless there is something to send, so the backend's defaults apply.
+    body: JSON.stringify({ query, ...(history.length ? { history } : {}), ...(top_k === undefined ? {} : { top_k }) }),
   });
   if (!res.ok) await failWith(res);
   return res.json();

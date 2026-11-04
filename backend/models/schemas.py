@@ -5,9 +5,18 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+class ChatTurn(BaseModel):
+    """One earlier question and the answer it got, sent along so a follow-up can be understood."""
+
+    question: str = Field(max_length=2000)
+    answer: str = Field(max_length=8000)
+
+
 class ChatRequest(BaseModel):
     query: str
     top_k: int | None = None  # None: the server's default (search.TOP_K)
+    # The conversation so far, oldest first. Only the last few pairs are used (generation.answer.MAX_HISTORY_TURNS).
+    history: list[ChatTurn] = Field(default_factory=list, max_length=10)
 
 
 class SourceItem(BaseModel):

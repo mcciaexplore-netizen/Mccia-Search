@@ -1,5 +1,6 @@
 """Generate grounded answers with Gemini from retrieved chunks."""
 
+import re
 import time
 from functools import lru_cache
 
@@ -19,30 +20,25 @@ RETRY_DELAYS = (2, 4, 8)  # seconds before retry 1, 2 and 3
 REQUEST_TIMEOUT_MS = 120_000
 
 # What the model says, word for word, when the sources do not hold the answer.
-DECLINE_ANSWER = "Not in Sampada archive"
+DECLINE_ANSWER = (
+    "This specific information is not found in the Sampada archive. "
+    "Please check the original magazine issues."
+)
 
 SYSTEM_PROMPT = (
-    "You are an expert on MCCIA (Mahratta Chamber of Commerce, Industries and "
-    "Agriculture), Pune, and on Sampada, its monthly magazine published from "
-    "1945 to 2017 in Marathi, Hindi and English. "
-    "The magazine was originally called "
-    "'मराठा चेंबर ऑफ कॉमर्स ॲण्ड इंडस्ट्रीजचें मासिक वृत्त' "
-    "and later renamed Sampada.\n\n"
-    "Rules:\n"
-    "1. Answer ONLY from the numbered source blocks provided.\n"
-    "2. NEVER use outside knowledge or memory, not even for simple facts you know "
-    "(capitals, definitions, today's news): if the blocks do not state it, decline.\n"
-    "3. NEVER guess names, dates, companies or figures.\n"
-    "4. If the answer is not clearly stated in the sources, respond with exactly "
-    f'"{DECLINE_ANSWER}" and nothing else. Read every block before deciding that.\n'
-    "5. Always cite the exact source block numbers you used, each with its issue "
-    "and page as written in the block's header, for example "
-    '"[2] (1972-Jul To 1973-Jun.PDF, Page 45)".\n'
-    "6. If asked about a specific year, only use sources from that year.\n"
-    "7. Respond in the SAME language the user used to ask. Even if the sources are "
-    "in Marathi and the question is in English, translate and answer in English.\n"
-    "8. When the question is about what something is called or named, look for "
-    "the exact Marathi or English name in the sources."
+    "You are a Sampada magazine expert. You have deep knowledge of MCCIA\n"
+    "history from 1945 to 2017 through the Sampada magazine archive.\n\n"
+    "STRICT RULES:\n"
+    "- Answer ONLY from the numbered source blocks provided below\n"
+    "- NEVER use outside knowledge or memory\n"
+    "- NEVER guess or assume any name, date, figure or fact\n"
+    "- If the answer is not clearly stated in the sources, say exactly:\n"
+    f"  '{DECLINE_ANSWER}'\n"
+    "- Always mention which year/issue the information comes from\n"
+    "- If multiple sources contradict each other, mention both and let\n"
+    "  the user decide\n"
+    "- Answer in the same language as the question (English/Marathi/Hindi)\n"
+    "- Be specific - exact names, exact years, exact figures from sources only"
 )
 
 NOT_FOUND_ANSWER = (
@@ -52,13 +48,48 @@ NOT_FOUND_ANSWER = (
     "Try asking in Marathi for better results on historical content."
 )
 
+# Conversation memory: only the last few question and answer pairs are used, and each is cut to a length that keeps the prompt small.
+MAX_HISTORY_TURNS = 3
+MAX_HISTORY_QUESTION_CHARS = 400
+MAX_HISTORY_ANSWER_CHARS = 1200
+MAX_STANDALONE_CHARS = 600
+
+# Used to turn a follow-up ("Tell me more about him") into a question that can be searched on its own.
+CONDENSE_SYSTEM_PROMPT = (
+    "You rewrite the latest question of a conversation as one complete, standalone question that can be used to search a magazine "
+    "archive. Use the earlier conversation only to fill in what the latest question leaves out, such as who 'he', 'she', 'it' or "
+    "'they' is, or which year or topic it means. Keep the language of the latest question. Do not answer the question, do not add "
+    "facts that the conversation does not state, and do not change what is being asked. If the latest question is already "
+    "complete, return it unchanged. Reply with the question only."
+)
+
 _API_ERRORS = (genai_errors.APIError, httpx.HTTPError, OSError)
 
 
-def build_prompt(query: str, chunks: list[dict]) -> str:
-    """Format the chunks as numbered context blocks, followed by the question.
+def clean_history(chat_history: list[dict] | None) -> list[dict]:
+    """The last MAX_HISTORY_TURNS question and answer pairs, as {"question", "answer"} with text cut to a sensible length.
 
-    Each block reads "[1] Source: file.pdf, Page 12" and then the chunk text.
+    Pairs that are not two non-empty strings are dropped. The history comes from the browser, so it is only ever used to
+    understand what a question refers to, never as a source of facts.
+    """
+    pairs = []
+    for turn in chat_history or []:
+        question, answer = (turn.get("question"), turn.get("answer")) if isinstance(turn, dict) else (None, None)
+        if isinstance(question, str) and isinstance(answer, str) and question.strip() and answer.strip():
+            pairs.append({"question": question.strip()[:MAX_HISTORY_QUESTION_CHARS], "answer": answer.strip()[:MAX_HISTORY_ANSWER_CHARS]})
+    return pairs[-MAX_HISTORY_TURNS:]
+
+
+def _history_text(history: list[dict]) -> str:
+    return "\n".join(f"Q: {turn['question']}\nA: {turn['answer']}" for turn in history)
+
+
+def build_prompt(query: str, chunks: list[dict], chat_history: list[dict] | None = None, standalone_query: str | None = None) -> str:
+    """Format the chunks as numbered context blocks, then the earlier conversation (if any), then the question.
+
+    Each block reads "[1] Source: file.pdf, Page 12" and then the chunk text. The conversation is there so the model can tell
+    what a follow-up refers to; it says in so many words that it is not a source. When the question was restated on its own
+    (standalone_query), that is shown too.
     """
     blocks = []
     for number, chunk in enumerate(chunks, start=1):
@@ -66,16 +97,50 @@ def build_prompt(query: str, chunks: list[dict]) -> str:
         if chunk.get("page_number") is not None:
             source += f", Page {chunk['page_number']}"
         blocks.append(f"[{number}] {source}\n{chunk['content']}")
-    return "Context:\n\n" + "\n\n".join(blocks) + f"\n\nQuestion: {query}"
+    prompt = "Context:\n\n" + "\n\n".join(blocks)
+    history = clean_history(chat_history)
+    if history:
+        prompt += (
+            "\n\nEarlier in this conversation (only to understand what the question refers to; it is NOT a source, "
+            "so do not take facts from it):\n" + _history_text(history)
+        )
+    prompt += f"\n\nQuestion: {query}"
+    if standalone_query and standalone_query.strip() != query.strip():
+        prompt += f"\n(The same question, restated on its own: {standalone_query.strip()})"
+    return prompt
 
 
-def generate_answer(query: str, chunks: list[dict]) -> dict:
+def condense_question(query: str, chat_history: list[dict] | None) -> str:
+    """The question as a standalone one, using the earlier conversation to resolve "him", "that year" and the like.
+
+    Without history the question is returned as it is. If rewriting fails or gives something unusable, so is the question as
+    asked: a follow-up then searches badly, but it is never lost.
+    """
+    history = clean_history(chat_history)
+    if not history:
+        return query
+    prompt = f"Conversation so far:\n{_history_text(history)}\n\nLatest question: {query}\n\nStandalone question:"
+    try:
+        rewritten = _generate(prompt, system_instruction=CONDENSE_SYSTEM_PROMPT, max_output_tokens=256)
+    except Exception as exc:  # noqa: BLE001 - a failed rewrite must not fail the question
+        print(f"[answer] could not restate the follow-up ({type(exc).__name__}); searching the question as asked")
+        return query
+    rewritten = re.sub(r"^(standalone question|question)\s*:\s*", "", rewritten.strip(), flags=re.IGNORECASE).strip().strip("\"'“”‘’ ")
+    if not rewritten or len(rewritten) > MAX_STANDALONE_CHARS or "\n" in rewritten:
+        return query
+    return rewritten
+
+
+def generate_answer(
+    query: str, chunks: list[dict], chat_history: list[dict] | None = None, standalone_query: str | None = None
+) -> dict:
     """Answer the query from the chunks (best first) with Gemini.
 
     Returns {answer, sources, found}. With no chunks there is nothing to answer
     from, so a fixed "not found" message is returned without calling Gemini. When Gemini
     says the chunks do not hold the answer (DECLINE_ANSWER), found is False and there are
     no sources. At most MAX_CONTEXT_CHUNKS chunks are used, for the prompt and for the sources.
+    `chat_history` (the last few {"question", "answer"} pairs) lets a follow-up be understood.
     Transient Gemini errors are retried after 2s, 4s and 8s; a RuntimeError is
     raised if the answer still cannot be generated.
     """
@@ -83,22 +148,32 @@ def generate_answer(query: str, chunks: list[dict]) -> dict:
         return {"answer": NOT_FOUND_ANSWER, "sources": [], "found": False}
 
     used = chunks[:MAX_CONTEXT_CHUNKS]
-    answer = _generate(build_prompt(query, used))
+    answer = _generate(build_prompt(query, used, chat_history, standalone_query))
     if _is_decline(answer):  # the pages it was given do not answer it, so none are shown
         return {"answer": DECLINE_ANSWER, "sources": [], "found": False}
     return {"answer": answer, "sources": _build_sources(used), "found": True}
 
 
-def rag(query: str, top_k: int | None = None) -> dict:
-    """Search for the top_k most relevant chunks (default: search.TOP_K), then answer from them."""
-    return generate_answer(query, search(query, TOP_K if top_k is None else top_k))
+def rag(query: str, top_k: int | None = None, chat_history: list[dict] | None = None) -> dict:
+    """Search for the top_k most relevant chunks (default: search.TOP_K), then answer from them.
+
+    With a conversation, a follow-up is first restated as a standalone question, which is what is searched; the answer is
+    still given to the question as it was asked, with the conversation alongside. The result also carries `search_query`,
+    the text that was searched.
+    """
+    history = clean_history(chat_history)
+    search_query = condense_question(query, history) if history else query
+    chunks = search(search_query, TOP_K if top_k is None else top_k)
+    result = generate_answer(query, chunks, history, search_query)
+    result["search_query"] = search_query
+    return result
 
 
-def _generate(prompt: str) -> str:
+def _generate(prompt: str, system_instruction: str = SYSTEM_PROMPT, max_output_tokens: int = MAX_OUTPUT_TOKENS) -> str:
     client = _get_client()
     config = types.GenerateContentConfig(
-        system_instruction=SYSTEM_PROMPT,
-        max_output_tokens=MAX_OUTPUT_TOKENS,
+        system_instruction=system_instruction,
+        max_output_tokens=max_output_tokens,
     )
 
     for attempt, delay in enumerate((*RETRY_DELAYS, None), start=1):
@@ -121,13 +196,26 @@ def _generate(prompt: str) -> str:
     if not text:
         raise RuntimeError(f"Gemini returned an empty answer (finish reason: {reason})")
     if reason == types.FinishReason.MAX_TOKENS:
-        print(f"[answer] WARNING: answer was cut off at {MAX_OUTPUT_TOKENS} tokens")
+        print(f"[answer] WARNING: answer was cut off at {max_output_tokens} tokens")
     return text
 
 
+def _letters(text: str) -> str:
+    """The text with everything but letters and digits removed, lower-cased: quotes, spacing and punctuation do not matter."""
+    return re.sub(r"[\W_]+", "", text.lower())
+
+
+_DECLINE_LETTERS = _letters(DECLINE_ANSWER)
+
+
 def _is_decline(answer: str) -> bool:
-    """Whether the answer is only the decline sentence (quotes, case and a final full stop aside)."""
-    return answer.strip().strip("\"'“”‘’ ").rstrip(".").lower() == DECLINE_ANSWER.rstrip(".").lower()
+    """Whether the answer is the decline sentence (quotes, case, spacing and punctuation aside), and not much besides.
+
+    A little slack is allowed for a stray word, but an answer that holds the sentence together with real content (a partial
+    answer) is not a decline: its sources are worth showing.
+    """
+    letters = _letters(answer)
+    return letters.startswith(_DECLINE_LETTERS) and len(letters) <= len(_DECLINE_LETTERS) + 20
 
 
 def _finish_reason(response: types.GenerateContentResponse) -> object:

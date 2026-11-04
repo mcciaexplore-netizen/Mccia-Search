@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import { SessionExpiredError, sendChat } from "@/lib/api";
+import { historyOf } from "@/lib/conversation";
 import { loadDraft, saveDraft, startRelaunch, wasRelaunched } from "@/lib/draft";
 import type { Message } from "@/lib/types";
 import Logo from "./Logo";
@@ -139,6 +140,9 @@ export default function ChatWindow({ initialMessages = [], onMessagesChange }: C
     const query = input.trim();
     if (!query || loading) return;
 
+    // The last few question and answer pairs of this chat go with the question, so a follow-up ("Tell me more about him") is understood.
+    // Taken before the new question is added to the chat.
+    const history = historyOf(messagesRef.current);
     const userMessage: Message = {
       id: newId(),
       role: "user",
@@ -153,7 +157,7 @@ export default function ChatWindow({ initialMessages = [], onMessagesChange }: C
     // React renders would take the whole page down instead of showing an error.
     let reply: Message;
     try {
-      const response = await sendChat(query);
+      const response = await sendChat(query, history);
       if (typeof response?.answer !== "string") {
         throw new Error("The server sent an unexpected response.");
       }

@@ -90,7 +90,7 @@ def chat(
         audit.record("chat", query=req.query, status=400, duration_ms=elapsed_ms(), client=client, detail="blank question", user_id=user.id, user_email=user.email)
         raise HTTPException(status_code=400, detail="query must not be blank")
     try:
-        result = rag(req.query, req.top_k)
+        result = rag(req.query, req.top_k, [turn.model_dump() for turn in req.history])
         response = ChatResponse(
             answer=result["answer"],
             sources=[SourceItem(**s) for s in result["sources"]],
@@ -113,6 +113,8 @@ def chat(
         status=200,
         duration_ms=elapsed_ms(),
         client=client,
+        # A follow-up is searched as a standalone question; the audit log shows what was searched when that differs from what was asked.
+        detail=f"searched as: {result['search_query']}" if result.get("search_query") not in (None, req.query) else None,
         user_id=user.id,
         user_email=user.email,
     )

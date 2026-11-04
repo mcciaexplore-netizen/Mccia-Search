@@ -1,7 +1,8 @@
-"""pgvector similarity search for relevant chunks."""
+"""Hybrid search for relevant chunks: pgvector similarity plus a PostgreSQL full-text keyword score."""
 
 import math
 import re
+import string
 import time
 from functools import lru_cache
 
@@ -24,6 +25,14 @@ from embedding_engine import (
 )
 
 TOP_K = 5  # number of chunks to return
+# Hybrid scoring: the CANDIDATES chunks most similar to the question (and at least min_similarity() similar) are re-scored as
+#   score = VECTOR_WEIGHT * similarity + KEYWORD_WEIGHT * keyword_score
+# where keyword_score is the share of the question's words (0..1) that a chunk contains, found with PostgreSQL full-text search.
+# A chunk that is not semantically close enough is never returned, however many of the words it has.
+CANDIDATES = 30
+VECTOR_WEIGHT = 0.6
+KEYWORD_WEIGHT = 0.4
+MAX_KEYWORDS = 12  # the question's words used for the keyword score; a longer question is cut here
 EMBEDDING_MODEL = GEMINI_EMBEDDING_MODEL  # the same setting ingest/embedder.py uses
 EMBEDDING_DIMENSION = GEMINI_DIMENSION  # what Gemini is asked for; bge-m3 makes 1024, see dimension()
 TASK_TYPE = "RETRIEVAL_QUERY"  # documents are embedded as RETRIEVAL_DOCUMENT
@@ -33,17 +42,39 @@ REQUEST_TIMEOUT_MS = 120_000
 
 _API_ERRORS = (genai_errors.APIError, httpx.HTTPError, OSError)
 
-_SEARCH_SQL = """
+# The keyword half, shared by both searches below. For each candidate chunk it is the share (0..1) of the question's words,
+# %(terms)s (a text[] of lower-case words, digits written 0-9), that the chunk contains. The match is PostgreSQL full-text search (the
+# 'simple' configuration: no stemming, no stop words, so it suits Marathi, Hindi and English alike) run on the candidates only, so it
+# needs no index and no schema change. Two things make it work for Marathi and Hindi pages: the chunk's Devanagari digits are written
+# 0-9 first (the tokenizer ignores digits like १९६५, so a year in them could never match), and a word that is not plain
+# ASCII also matches as plain text (how a tokenizer splits Devanagari depends on the database's locale).
+_KEYWORD_SCORE = """
     SELECT
-      c.id, c.content, c.page_number, c.chunk_index,
-      d.filename, d.drive_file_id, c.document_id,
-      1 - (c.embedding <=> %(query)s::vector) AS similarity
-    FROM chunks c
-    JOIN documents d ON d.id = c.document_id
-    WHERE 1 - (c.embedding <=> %(query)s::vector) >= %(min_similarity)s
-    ORDER BY c.embedding <=> %(query)s::vector
-    LIMIT %(top_k)s
+      k.id, k.content, k.page_number, k.chunk_index, k.filename, k.drive_file_id, k.document_id, k.similarity,
+      CASE WHEN cardinality(%(terms)s::text[]) = 0 THEN 0.0 ELSE
+        (SELECT count(*) FROM unnest(%(terms)s::text[]) AS t(term)
+         WHERE v.tsv @@ websearch_to_tsquery('simple', t.term)
+            OR (t.term !~ '^[ -~]+$' AND position(t.term IN v.norm) > 0))::float8
+        / cardinality(%(terms)s::text[])
+      END AS keyword_score
+    FROM candidates k
+    CROSS JOIN LATERAL (SELECT lower(translate(k.content, '०१२३४५६७८९', '0123456789')) AS norm) n
+    CROSS JOIN LATERAL (SELECT n.norm AS norm, to_tsvector('simple', n.norm) AS tsv) v
 """
+
+_SEARCH_SQL = """
+    WITH candidates AS (
+      SELECT
+        c.id, c.content, c.page_number, c.chunk_index,
+        d.filename, d.drive_file_id, c.document_id,
+        1 - (c.embedding <=> %(query)s::vector) AS similarity
+      FROM chunks c
+      JOIN documents d ON d.id = c.document_id
+      WHERE 1 - (c.embedding <=> %(query)s::vector) >= %(min_similarity)s
+      ORDER BY c.embedding <=> %(query)s::vector
+      LIMIT %(candidates)s
+    )
+""" + _KEYWORD_SCORE
 
 # The same search over the chunks of some documents only. The approximate (HNSW) index finds
 # its nearest chunks across the whole archive and only then drops those outside the documents,
@@ -53,21 +84,35 @@ _DOCUMENT_SEARCH_SQL = """
       SELECT id, content, page_number, chunk_index, document_id, embedding
       FROM chunks
       WHERE document_id = ANY(%(document_ids)s)
+    ),
+    candidates AS (
+      SELECT
+        c.id, c.content, c.page_number, c.chunk_index,
+        d.filename, d.drive_file_id, c.document_id,
+        1 - (c.embedding <=> %(query)s::vector) AS similarity
+      FROM pool c
+      JOIN documents d ON d.id = c.document_id
+      WHERE 1 - (c.embedding <=> %(query)s::vector) >= %(min_similarity)s
+      ORDER BY c.embedding <=> %(query)s::vector
+      LIMIT %(candidates)s
     )
-    SELECT
-      c.id, c.content, c.page_number, c.chunk_index,
-      d.filename, d.drive_file_id, c.document_id,
-      1 - (c.embedding <=> %(query)s::vector) AS similarity
-    FROM pool c
-    JOIN documents d ON d.id = c.document_id
-    WHERE 1 - (c.embedding <=> %(query)s::vector) >= %(min_similarity)s
-    ORDER BY c.embedding <=> %(query)s::vector
-    LIMIT %(top_k)s
-"""
+""" + _KEYWORD_SCORE
 
 # A year in a question, in Latin or Devanagari digits (Marathi and Hindi write १९६५ for 1965).
 _YEAR = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
 _LATIN_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
+
+# Words that say nothing about what a question is about (English, Marathi, Hindi), and the names that nearly every page of this archive
+# carries: they are left out of the keyword score so that it measures the words that tell one page from another.
+_PUNCTUATION = string.punctuation + "“”‘’…–—।॥"
+_STOPWORDS = frozenset(
+    """a an the of in on at to for from by with and or is are was were be been being who whom whose what which when where why how
+    did do does done has have had it its this that these those about tell me more please give list name any there their his her he
+    she they them also as than then into during after before between mccia sampada magazine issue
+    काय कोण कोणी कुठे केव्हा कसे कशी का आहे आहेत होते होता होती आणि व किंवा या ते ती तो त्या हा ही हे चे ची चा च्या मध्ये साठी कडे
+    पासून बद्दल माहिती सांगा द्या संपदा
+    क्या कौन कहाँ कब कैसे क्यों है हैं था थे थी और या का की के को में से पर लिए बारे जानकारी बताइए बताओ""".split()
+)
 
 
 def embed_query(query: str) -> list[float]:
@@ -127,6 +172,21 @@ def volume_years(filename: str) -> tuple[int, int] | None:
     return (min(years), max(years)) if years else None
 
 
+def keyword_terms(query: str) -> list[str]:
+    """The words of a question that the keyword score looks for, each once, in order (at most MAX_KEYWORDS).
+
+    Lower-cased, with stop words and one-letter words dropped and digits written 0-9 (a year typed as १९६५ is looked for as
+    1965; the search side writes the pages' digits the same way).
+    """
+    terms: list[str] = []
+    for raw in query.lower().split():
+        word = raw.strip(_PUNCTUATION).translate(_LATIN_DIGITS)
+        if len(word) < 2 or word in _STOPWORDS:
+            continue
+        terms.append(word)
+    return list(dict.fromkeys(terms))[:MAX_KEYWORDS]
+
+
 def documents_for_years(years: list[int]) -> list[int]:
     """The ids of the documents whose issues cover any of the years."""
     with get_pooled_connection() as conn:
@@ -140,20 +200,20 @@ def documents_for_years(years: list[int]) -> list[int]:
 
 
 def search(query: str, top_k: int = TOP_K) -> list[dict]:
-    """Return the chunks most similar to the query, best first.
+    """Return the chunks that best answer the query, best first (hybrid: meaning plus keywords).
 
-    Each result is {chunk_id, content, page_number, chunk_index, filename,
-    drive_file_id, document_id, similarity}, with cosine similarity of at least the
-    engine's min_similarity() (0.45 for Gemini, 0.40 for bge-m3). When the query names a
-    year (such as 1965), only chunks of the issues that cover that year are searched.
-    Returns an empty list when nothing is similar enough, no issue covers the year, or the
-    query is blank.
+    Each result is {chunk_id, content, page_number, chunk_index, filename, drive_file_id, document_id,
+    similarity, keyword_score, score}. `similarity` is the cosine similarity of the chunk to the question and is at least
+    the engine's min_similarity() (0.45 for Gemini, 0.40 for bge-m3): a chunk below it is never returned. `keyword_score` is
+    the share (0..1) of the question's words the chunk contains (PostgreSQL full-text search), and the results are ordered by
+    `score` = VECTOR_WEIGHT * similarity + KEYWORD_WEIGHT * keyword_score, among the CANDIDATES most similar chunks. When the
+    query names a year (such as 1965), only chunks of the issues that cover that year are searched.
+    Returns an empty list when nothing is similar enough, no issue covers the year, or the query is blank.
     """
     if top_k < 1:
         raise ValueError(f"top_k must be at least 1, got {top_k}")
 
     results: list[dict] = []
-    rows: list[tuple] = []
     if query.strip():
         ensure_matches_database()  # the query must come from the model behind the stored vectors
         years = years_in(query)
@@ -164,12 +224,24 @@ def search(query: str, top_k: int = TOP_K) -> list[dict]:
             params = {
                 "query": Vector(embed_query(query)).to_text(),
                 "min_similarity": min_similarity(),  # per engine: each model scores differently
-                "top_k": top_k,
+                "candidates": max(CANDIDATES, top_k),
+                "terms": keyword_terms(query),
             }
             if document_ids is not None:
                 params["document_ids"] = document_ids
-            rows = _run_search(params)
-        results = [
+            results = rank(_run_search(params), top_k)
+
+    top = f"{results[0]['similarity']:.2f}" if results else "n/a"
+    print(f"[search] query returned {len(results)} chunks (top similarity: {top})")
+    return results
+
+
+def rank(rows: list[tuple], top_k: int) -> list[dict]:
+    """Score the candidate rows (see _KEYWORD_SCORE for their columns) and keep the best top_k, best first."""
+    results = []
+    for chunk_id, content, page_number, chunk_index, filename, drive_file_id, document_id, similarity, keyword_score in rows:
+        similarity, keyword_score = float(similarity), float(keyword_score)
+        results.append(
             {
                 "chunk_id": chunk_id,
                 "content": content,
@@ -179,22 +251,12 @@ def search(query: str, top_k: int = TOP_K) -> list[dict]:
                 "drive_file_id": drive_file_id,
                 "document_id": document_id,
                 "similarity": similarity,
+                "keyword_score": keyword_score,
+                "score": VECTOR_WEIGHT * similarity + KEYWORD_WEIGHT * keyword_score,
             }
-            for (
-                chunk_id,
-                content,
-                page_number,
-                chunk_index,
-                filename,
-                drive_file_id,
-                document_id,
-                similarity,
-            ) in rows
-        ]
-
-    top = f"{results[0]['similarity']:.2f}" if results else "n/a"
-    print(f"[search] query returned {len(results)} chunks (top similarity: {top})")
-    return results
+        )
+    results.sort(key=lambda r: (-r["score"], -r["similarity"], r["chunk_id"]))
+    return results[:top_k]
 
 
 def _run_search(params: dict) -> list[tuple]:
