@@ -32,3 +32,6 @@ paddle = [
 local-embeddings = [
     "sentence-transformers>=6.1.0",
 ]
+surya = [
+    "surya-ocr>=0.23.0",
+]

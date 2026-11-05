@@ -21,7 +21,7 @@ import sys
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--engine", required=True, help="gemini, tesseract, easyocr or paddle")
+    parser.add_argument("--engine", required=True, help="gemini, tesseract, easyocr, paddle or surya")
     parser.add_argument("--start-year", type=int, required=True)
     parser.add_argument("--end-year", type=int, required=True)
     args = parser.parse_args(argv)

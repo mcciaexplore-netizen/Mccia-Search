@@ -1,5 +1,6 @@
-"""OCR of PDF documents using Gemini, or a free local engine (OCR_ENGINE: tesseract, easyocr, paddle)."""
+"""OCR of PDF documents using Gemini, or a free local engine (OCR_ENGINE: tesseract, easyocr, paddle, surya)."""
 
+import html
 import io
 import json
 import os
@@ -22,7 +23,7 @@ from config import GEMINI_API_KEY, GEMINI_OCR_MODEL, OCR_CACHE_DIR, OCR_ENGINE
 # Set GEMINI_OCR_MODEL in .env to switch models (gemini-2.0-flash was shut down
 # on 2026-06-01).
 OCR_MODEL = GEMINI_OCR_MODEL
-ENGINES = ("gemini", "tesseract", "easyocr", "paddle")  # the values OCR_ENGINE accepts
+ENGINES = ("gemini", "tesseract", "easyocr", "paddle", "surya")  # the values OCR_ENGINE accepts
 
 SYSTEM_PROMPT = (
     "You are an OCR engine. Extract ALL text from this scanned document page "
@@ -42,6 +43,10 @@ TESSERACT_LANGS = "mar+hin+eng"  # Marathi, Hindi, English
 TESSERACT_TIMEOUT_SECONDS = 120  # a page that takes longer is killed and counts as failed
 EASYOCR_LANGS = ["mr", "hi", "en"]  # Marathi, Hindi, English
 PADDLE_LANG = "mr"  # Marathi: Paddle gives every Devanagari language, Hindi too, its one Devanagari model
+
+# Surya (a 689M-parameter vision-language model, run by llama.cpp's llama-server): the server decodes this many pages at once. Measured on an
+# Apple M2: 101 s for one Marathi page alone, 44 s per page with four at once. It reads Marathi, Hindi and English by itself (no language setting).
+SURYA_PARALLEL = OCR_CONCURRENCY
 
 DEVANAGARI_START, DEVANAGARI_END = "ऀ", "ॿ"
 LANGUAGE_SAMPLE_CHARS = 500
@@ -99,7 +104,7 @@ def pdf_to_images(pdf_data: bytes | Path) -> list[bytes]:
 def ocr_page(image_bytes: bytes, page_num: int) -> str:
     """Extract the text of one page image; "" if the page is blank.
 
-    Uses Gemini, or the free engine named by OCR_ENGINE (tesseract, easyocr or paddle).
+    Uses Gemini, or the free engine named by OCR_ENGINE (tesseract, easyocr, paddle or surya).
     Gemini's transient errors (network, 408/429/5xx) are retried after 2s, 4s and 8s.
     Raises OCRPageError if the page still fails or the error is not retryable.
     """
@@ -111,6 +116,8 @@ def ocr_page(image_bytes: bytes, page_num: int) -> str:
         return _ocr_page_easyocr(image_bytes, page_num)
     if OCR_ENGINE == "paddle":
         return _ocr_page_paddle(image_bytes, page_num)
+    if OCR_ENGINE == "surya":
+        return _ocr_page_surya(image_bytes, page_num)
     if OCR_ENGINE != "gemini":
         raise _unknown_engine()
 
@@ -306,6 +313,9 @@ def _prepare_engine() -> None:
         _easyocr_reader()  # loads (and the first time downloads) the model before the workers start
     elif OCR_ENGINE == "paddle":
         _paddle_engine()
+    elif OCR_ENGINE == "surya":
+        _check_surya()
+        _surya_recognizer()  # starts the server (the first time, downloads the model) before the workers start
     else:
         raise _unknown_engine()
 
@@ -421,6 +431,75 @@ def _ocr_page_paddle(image_bytes: bytes, page_num: int) -> str:
     except Exception as exc:  # the library raises whatever its image or model code raises
         raise OCRPageError(f"page {page_num}: PaddleOCR failed: {_brief(exc)}") from exc
     return "\n".join(lines).strip()
+
+
+def _check_surya() -> None:
+    """Raise a RuntimeError saying what to install if nothing is there to run the Surya model."""
+    backend = (os.environ.get("SURYA_INFERENCE_BACKEND") or "").lower()
+    if os.environ.get("SURYA_INFERENCE_URL") or backend in ("vllm", "mlx"):
+        return  # an existing server, or a backend that brings its own
+    binary = os.environ.get("LLAMA_CPP_BINARY") or "llama-server"
+    if not (os.path.isfile(binary) or shutil.which(binary)):
+        raise RuntimeError(
+            "OCR_ENGINE=surya needs llama.cpp's llama-server, which runs the Surya model. Install it with: brew install llama.cpp "
+            "(or set SURYA_INFERENCE_URL to a running Surya server, or SURYA_INFERENCE_BACKEND=vllm on an NVIDIA machine)."
+        )
+
+
+@lru_cache(maxsize=1)
+def _surya_recognizer():
+    """Surya's recognizer on its own inference server, started once; the first time, the model (about 1.8 GB) is downloaded."""
+    os.environ.setdefault("SURYA_INFERENCE_PARALLEL", str(SURYA_PARALLEL))  # read when surya.settings is first imported
+    try:
+        from surya.inference import SuryaInferenceManager
+        from surya.recognition import RecognitionPredictor
+    except ImportError as exc:
+        raise RuntimeError("OCR_ENGINE=surya needs the surya-ocr package. Run `uv sync --extra surya` in backend/.") from exc
+    print("[ocr] starting the Surya server (the first time this downloads the model)...")
+    manager = SuryaInferenceManager()
+    manager.start()  # the server is stopped again when this process exits
+    return RecognitionPredictor(manager)
+
+
+def _ocr_page_surya(image_bytes: bytes, page_num: int) -> str:
+    """Extract the text of one page image with Surya; "" if the page is blank. Several pages may be read at once."""
+    recognizer = _surya_recognizer()
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            page = image.convert("RGB")
+        result = recognizer([page])[0]
+    except Exception as exc:  # the library raises whatever its image, server or model code raises
+        raise OCRPageError(f"page {page_num}: Surya failed: {_brief(exc)}") from exc
+    unreadable = sum(1 for block in result.blocks if block.error)
+    if unreadable:  # an unreadable block would be a silent hole in the page, so the whole page counts as failed and is retried
+        raise OCRPageError(f"page {page_num}: Surya could not read {unreadable} block(s)")
+    return _surya_page_text(result)
+
+
+_BLOCK_END = re.compile(r"</(?:p|div|li|tr|h[1-6]|table|caption)>|<br\s*/?>", re.IGNORECASE)
+_CELL_END = re.compile(r"</t[dh]>", re.IGNORECASE)
+_TAG = re.compile(r"<[^>]+>")
+
+
+def _surya_page_text(result) -> str:
+    """The plain text of a Surya page result: its blocks in reading order, paragraphs apart by a blank line."""
+    parts = []
+    for block in sorted(result.blocks, key=lambda b: b.reading_order):
+        text = _html_to_text(block.html) if block.html and not block.skipped else ""
+        if text:
+            parts.append(text)
+    return "\n\n".join(parts).strip()
+
+
+def _html_to_text(markup: str) -> str:
+    """Surya writes each block as HTML. Paragraph ends become line breaks, table cells are separated by a space, other tags vanish."""
+    text = _BLOCK_END.sub("\n", markup)
+    text = _CELL_END.sub(" ", text)
+    text = html.unescape(_TAG.sub("", text))
+    lines = (re.sub(r"[ \t\u00a0]+", " ", line).strip() for line in text.split("\n"))
+    return "\n".join(line for line in lines if line)
 
 
 def _is_retryable(exc: Exception) -> bool:
