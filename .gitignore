@@ -10,3 +10,7 @@ __pycache__/
 .env*.local
 web/package-lock.json
 *.tsbuildinfo
+
+# Editor backup copies of env files, and database dumps (they hold passwords and all the data)
+.env*.save
+*.dump
