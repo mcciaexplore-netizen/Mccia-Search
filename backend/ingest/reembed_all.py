@@ -21,7 +21,14 @@ the work.
 The old vectors cannot be brought back (Gemini would have to be paid again), and while this
 runs, search finds only the chunks that are already done. A server still set up for Gemini
 cannot search at all until it runs the new code with EMBEDDING_ENGINE=bge.
-Roughly 0.5 s per chunk on a Mac with Apple's GPU, 1 s on a plain CPU: hours for the full archive.
+Roughly 0.5 s per chunk on a Mac with Apple's GPU, 1 s on a plain CPU: hours for the full archive
+(measured on an Apple M2, 5 Nov 2026: 0.43 s per chunk, about 4.6 hours for 39,002 chunks).
+
+WARNING, if people are using the site that reads this database: for all those hours its search finds
+nothing, its documents show as waiting for embeddings, and the running backend (still on Gemini) fails
+every question once the column has changed. For a live site use the shadow-column method in
+docs/embeddings-bge-m3.md instead: it fills a second column in the background while search keeps
+working, then switches in one short step.
 """
 
 import argparse
@@ -67,7 +74,9 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"\nThis would DELETE the vectors of all {total} chunks, set the column to "
                 f"vector({width}) and re-embed every chunk with {model}.\n"
-                "Search is incomplete until it has finished. Run again with --yes to do it."
+                "Search is incomplete until it has finished (hours: about 0.4 s per chunk on an Apple M2).\n"
+                "If a live site reads this database, it stops finding anything until then: read docs/embeddings-bge-m3.md first.\n"
+                "Run again with --yes to do it."
             )
             return 0
         with get_connection() as conn, conn.transaction():
