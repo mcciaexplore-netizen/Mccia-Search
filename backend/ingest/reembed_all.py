@@ -13,7 +13,8 @@ that backend, and going back is starting the Gemini one again: the database need
 
 What it does:
   1. Adds the column if the database does not have it yet (empty, nullable: instant).
-  2. Embeds every chunk whose embedding_bge is empty, 32 at a time (the model reads 8 at once), each batch saved as soon as it is done.
+  2. Embeds every chunk whose embedding_bge is empty, 10 at a time (the model reads 8 at once), each batch saved as soon as it is done, and prints a
+     progress line every 10 chunks:  [bge] 576/39002 chunks embedded (1.5%) — 110.5 chunks/min — ETA: 5h 48m
   3. When no chunk is left, builds the search index on the column (a few minutes; writes to chunks wait meanwhile, searches do not).
 
 It is safe to stop (Ctrl-C) and run again: it carries on with the chunks that are still empty, and so it also catches up with issues
@@ -29,12 +30,36 @@ import time
 
 import embedding_engine
 from db.connection import get_connection, init_db
+from ingest import embedder
 from ingest.embed_pending import EmbeddingStopped, _embed_one_batch
 
-FETCH_SIZE = 32  # chunks taken and saved together; the model itself reads embedding_engine.BATCH_SIZES["bge"] of them at once
-PROGRESS_EVERY = 4  # fetches between progress lines
+FETCH_SIZE = 10  # chunks taken and saved together; the model itself reads embedding_engine.BATCH_SIZES["bge"] of them at once
+PROGRESS_EVERY = 10  # chunks between progress lines (a line is printed after the batch that reaches this many more)
 INDEX_NAME = "chunks_embedding_bge_idx"
 INDEX_MEMORY = "256MB"  # maintenance_work_mem for the index build: faster than the default, and safe on a small database server
+
+
+def format_eta(seconds: float) -> str:
+    """How long to go, as a person reads it: "4h 32m", "45m", or "<1m"."""
+    if seconds < 60:
+        return "<1m"
+    hours, minutes = divmod(round(seconds / 60), 60)
+    return f"{hours}h {minutes}m" if hours else f"{minutes}m"
+
+
+def progress_line(embedded: int, total: int, rate_per_minute: float | None) -> str:
+    """The progress line: "[bge] 576/39002 chunks embedded (1.5%) — 110.5 chunks/min — ETA: 5h 48m".
+
+    `embedded` counts every chunk that has its vector, including those of earlier runs. The speed is None until it has been measured, and the
+    ETA is for the whole archive, not for a --limit.
+    """
+    percent = 100 * embedded / total if total else 100.0
+    line = f"[bge] {embedded}/{total} chunks embedded ({percent:.1f}%)"
+    if not rate_per_minute or rate_per_minute <= 0:
+        return line + " — measuring speed…"
+    left = max(total - embedded, 0)
+    eta = "done" if left == 0 else format_eta(left / rate_per_minute * 60)
+    return f"{line} — {rate_per_minute:.1f} chunks/min — ETA: {eta}"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -65,23 +90,31 @@ def main(argv: list[str] | None = None) -> int:
 
     init_db()  # adds chunks.embedding_bge if this database does not have it yet
     embedding_engine.ensure_matches_database()
-    missing = _state()["missing"]
+    state = _state()
+    missing, total, already = state["missing"], state["total"], state["filled"]
     if missing == 0:
         print("Nothing to embed: every chunk already has its bge-m3 vector.")
         return _finish()
     target = min(missing, args.limit) if args.limit else missing
     print(f"\nEmbedding {target} of {missing} chunks that have no bge-m3 vector yet. Ctrl-C stops it; run it again to carry on.")
+    print(progress_line(already, total, None), flush=True)
 
-    done, started, fetches = 0, time.monotonic(), 0
+    done, started = 0, time.monotonic()
+    shown = 0  # chunks done when the last progress line was printed
+    first_at, first_done = None, 0  # the speed is measured from the end of the first batch, which leaves out loading the model
     try:
-        while done < target:
-            claimed = _embed_one_batch(min(args.fetch_size, target - done), finish_documents=False)
-            if claimed == 0:
-                break
-            done, fetches = done + claimed, fetches + 1
-            if fetches % PROGRESS_EVERY == 0:
-                rate = done / (time.monotonic() - started)
-                print(f"  {done}/{target}  {rate * 60:.0f} chunks/min  about {max(target - done, 0) / rate / 3600:.1f} h to go", flush=True)
+        with embedder.quiet():  # the progress line says it all; the model's own line per batch would double the log
+            while done < target:
+                claimed = _embed_one_batch(min(args.fetch_size, target - done), finish_documents=False)
+                if claimed == 0:
+                    break
+                done += claimed
+                now = time.monotonic()
+                if first_at is None:
+                    first_at, first_done = now, done
+                if done - shown >= PROGRESS_EVERY:
+                    print(progress_line(already + done, total, _rate(done - first_done, now - first_at)), flush=True)
+                    shown = done
     except EmbeddingStopped as exc:
         print(f"Stopped after {done} chunks: {exc}\nRun it again to carry on from here.")
         return 1
@@ -89,11 +122,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Interrupted after {done} chunks (they are saved). Run it again to carry on.")
         return 130
 
+    if done != shown:
+        print(progress_line(already + done, total, _rate(done - first_done, time.monotonic() - first_at) if first_at else None), flush=True)
     print(f"Embedded {done} chunks in {(time.monotonic() - started) / 60:.1f} min.")
     if args.limit and done < missing:
         print(f"{missing - done} chunks still to do (this was a trial run: run again without --limit).")
         return 0
     return _finish()
+
+
+def _rate(chunks: int, seconds: float) -> float | None:
+    """Chunks per minute over a stretch of time; None while there is nothing to measure."""
+    return chunks / (seconds / 60) if chunks > 0 and seconds > 0 else None
 
 
 def _finish() -> int:

@@ -2,6 +2,7 @@
 
 import math
 import time
+from contextlib import contextmanager
 from functools import lru_cache
 
 import httpx
@@ -53,6 +54,20 @@ _INSERT_CHUNK_TEXT = """
 """
 
 
+_quiet = False  # set by quiet(): no "[embed] N chunks with the ... model" line per call
+
+
+@contextmanager
+def quiet():
+    """Leave out the per-call "[embed] N chunks with the local model" line, for a long run that prints its own progress (ingest.reembed_all)."""
+    global _quiet
+    previous, _quiet = _quiet, True
+    try:
+        yield
+    finally:
+        _quiet = previous
+
+
 def embed_texts(texts: list[str]) -> list[list[float]]:
     """Embed texts as retrieval documents; returns one vector per text (dimension() floats).
 
@@ -63,7 +78,8 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
     if uses_local_model():
-        print(f"[embed] {len(texts)} chunks with the {engine()} model")
+        if not _quiet:
+            print(f"[embed] {len(texts)} chunks with the {engine()} model")
         return embed_local(texts)
 
     client = _get_client()

@@ -611,3 +611,68 @@ def test_preflight_fails_when_a_search_finds_nothing(ready, monkeypatch, capsys)
 def test_preflight_refuses_another_engine(monkeypatch, capsys):
     monkeypatch.setattr(embedding_engine, "EMBEDDING_ENGINE", "gemini")
     assert preflight_bge.main([]) == 2
+
+
+# ---- the progress line of the fill ------------------------------------------------------------------------------------------------
+
+
+def test_the_progress_line_has_the_wanted_shape():
+    assert reembed_all.progress_line(576, 39002, 110.5) == "[bge] 576/39002 chunks embedded (1.5%) — 110.5 chunks/min — ETA: 5h 48m"
+
+
+def test_the_progress_line_before_the_speed_is_known():
+    assert reembed_all.progress_line(576, 39002, None) == "[bge] 576/39002 chunks embedded (1.5%) — measuring speed…"
+    assert reembed_all.progress_line(576, 39002, 0) == "[bge] 576/39002 chunks embedded (1.5%) — measuring speed…"
+
+
+def test_the_progress_line_when_everything_is_done():
+    assert reembed_all.progress_line(39002, 39002, 120.0) == "[bge] 39002/39002 chunks embedded (100.0%) — 120.0 chunks/min — ETA: done"
+    assert reembed_all.progress_line(0, 0, None).startswith("[bge] 0/0 chunks embedded (100.0%)")  # an empty archive does not divide by zero
+
+
+@pytest.mark.parametrize("seconds, text", [(0, "<1m"), (59, "<1m"), (60, "1m"), (45 * 60, "45m"), (3600, "1h 0m"), (4 * 3600 + 32 * 60, "4h 32m"), (43 * 3600 + 10 * 60, "43h 10m"), (3599.6, "1h 0m")])
+def test_the_eta_reads_as_a_person_would_say_it(seconds, text):
+    assert reembed_all.format_eta(seconds) == text
+
+
+def test_the_speed_is_none_until_something_has_been_measured():
+    assert reembed_all._rate(0, 5) is None and reembed_all._rate(10, 0) is None
+    assert reembed_all._rate(20, 60) == 20.0
+
+
+@needs_scratch
+def test_a_line_is_printed_every_ten_chunks_and_a_last_one_at_the_end(live, fake_bge, capsys):
+    for i in range(18):  # 7 chunks exist: make 25
+        add_chunk(live["db"], live["done"], 100 + i, f"more {i}", gemini=near(GEMINI_DIM, 0.6))
+    assert reembed_all.main(["--yes"]) == 0
+    lines = [l for l in capsys.readouterr().out.splitlines() if l.startswith("[bge]")]
+    assert [l.split(" chunks embedded")[0] for l in lines] == ["[bge] 0/25", "[bge] 10/25", "[bge] 20/25", "[bge] 25/25"]
+    assert lines[0].endswith("measuring speed…") and "(100.0%)" in lines[-1]
+    assert all("chunks/min — ETA:" in l for l in lines[2:])  # the speed is known from the second batch on
+    assert fake_bge == [10, 10, 5]  # the batches the model was asked for
+
+
+@needs_scratch
+def test_the_count_includes_what_earlier_runs_did(live, fake_bge, capsys):
+    assert reembed_all.main(["--yes", "--limit", "3"]) == 0
+    capsys.readouterr()
+    assert reembed_all.main(["--yes"]) == 0
+    lines = [l for l in capsys.readouterr().out.splitlines() if l.startswith("[bge]")]
+    assert lines[0].startswith("[bge] 3/7 chunks embedded (42.9%)")  # the 3 of the first run count from the start
+    assert lines[-1].startswith("[bge] 7/7 chunks embedded (100.0%)")
+
+
+@needs_scratch
+def test_the_fill_leaves_out_the_models_own_line_per_batch(live, capsys, monkeypatch):
+    # the real embed_texts (it prints that line) with a fake model underneath: no 2 GB model in a test
+    monkeypatch.setattr(embedding_engine, "EMBEDDING_ENGINE", "bge")
+    monkeypatch.setattr(embedder, "embed_local", lambda texts: [near(BGE_DIM, 0.6) for _ in texts])
+    assert reembed_all.main(["--yes"]) == 0
+    out = capsys.readouterr().out
+    assert "[embed] " not in out and "[bge] 7/7" in out
+    embedder.embed_texts(["x"])  # outside the fill the line is back
+    assert "[embed] 1 chunks with the bge model" in capsys.readouterr().out
+
+
+def test_no_test_can_reach_the_real_database_by_default():
+    assert "tests-must-not-reach-the-real-database" in connection.DATABASE_URL

@@ -27,6 +27,8 @@ leaves Gemini's column byte for byte as it was. See `backend/tests/test_bge_shad
 ## What it costs (measured on an Apple M2, 5 Nov 2026)
 
 - **Filling:** about 0.43 s per chunk on the Mac's GPU, so about **4.6 hours** for 39,002 chunks. A plain CPU is about twice as slow.
+  **Do not fill on the EC2 server:** measured there on 5 Nov 2026 (container limited to 1.5 CPUs at low priority), 32 chunks took 6.0 minutes including
+  the model load, about 9-11 s per chunk, so **4-5 days** for the rest. Run the fill on the Mac.
 - **The server then runs the model to embed every question:** about 2-3 GB of memory (the server has 7.8 GB, 6.1 GB free on 5 Nov, with the backend
   itself at 0.23 GB), and a question takes 33 ms on the M2's GPU / 90 ms on 2 CPU threads (a 2-vCPU Xeon is a few times slower: expect a few hundred ms,
   about what a call to Gemini costs from there). The model loads in the background when the server starts (10-30 s); a question arriving earlier waits
@@ -50,7 +52,7 @@ uv run python -m ingest.reembed_all --yes --limit 64      # a 1-2 minute trial f
 caffeinate -i uv run python -m ingest.reembed_all --yes   # the whole thing; caffeinate keeps the Mac awake
 ```
 
-It is safe to stop with Ctrl-C and run again: every batch of 32 chunks is saved as soon as it is done, and the next run carries on with the chunks that
+It is safe to stop with Ctrl-C and run again: every batch of 10 chunks is saved as soon as it is done, and the next run carries on with the chunks that
 are still empty. When the last chunk is done it builds the search index (a few minutes; searches keep working). **Run it once more right before
 going live**, to pick up anything ingested meanwhile.
 
