@@ -35,6 +35,10 @@ SYSTEM_PROMPT = (
 )
 
 RENDER_DPI = 200
+# The longest side, in pixels, a rendered page may have. A normal page at 200 DPI is 1,400-2,300 px; a PDF whose page box is wrong (page 46 of
+# the 1961-April Part-1 volume says it is 151,200 x 194,400 points, 300 times its real size) would need a canvas of 227 gigapixels, which
+# MuPDF refuses ("Overly large image") and PDFium tries to allocate until the system kills the process. Such a page is drawn smaller instead.
+MAX_RENDER_SIDE = 3500
 RETRY_DELAYS = (2, 4, 8)  # seconds before retry 1, 2 and 3
 REQUEST_TIMEOUT_MS = 120_000
 OCR_CONCURRENCY = max(1, int(os.environ.get("OCR_CONCURRENCY") or "4"))  # pages sent to Gemini at once
@@ -91,14 +95,68 @@ def pdf_to_images(pdf_data: bytes | Path) -> list[bytes]:
 
         print(f"[ocr] rendering {total_pages} pages from {name}")
         images: list[bytes] = []
-        for index in range(total_pages):
-            try:
-                images.append(doc[index].get_pixmap(dpi=RENDER_DPI).tobytes("png"))
-            except Exception as exc:
-                # An empty placeholder keeps page numbers aligned; ocr_pdf reports it.
-                print(f"[ocr] could not render page {index + 1} of {name}: {exc}")
-                images.append(b"")
+        fallback = None  # PDFium, opened the first time a page needs it
+        try:
+            for index in range(total_pages):
+                try:
+                    page = doc[index]
+                    dpi = _render_dpi(page.rect.width, page.rect.height)
+                    if dpi < RENDER_DPI:
+                        print(f"[ocr] page {index + 1} of {name} says it is {page.rect.width:.0f} x {page.rect.height:.0f} points: drawn at {dpi:.1f} DPI instead of {RENDER_DPI}")
+                    images.append(_draw_page(page, dpi).tobytes("png"))
+                    continue
+                except Exception as exc:
+                    mupdf_error = exc
+                # MuPDF refuses some pages, for example "code=5: Overly large image" for a scan whose embedded image it judges too big. PDFium,
+                # another renderer, usually draws them; only when it fails too does the page get an empty placeholder (which keeps the page
+                # numbers aligned, and which ocr_pdf reports as a failed page).
+                try:
+                    if fallback is None:
+                        fallback = _open_pdfium(pdf_data)
+                    images.append(_render_with_pdfium(fallback, index))
+                    print(f"[ocr] page {index + 1} of {name}: MuPDF could not render it ({mupdf_error}); drawn with PDFium instead")
+                except Exception as exc:
+                    print(f"[ocr] could not render page {index + 1} of {name}: {mupdf_error}; PDFium could not either: {exc}")
+                    images.append(b"")
+        finally:
+            if fallback is not None:
+                fallback.close()
     return images
+
+
+def _open_pdfium(pdf_data: bytes | Path):
+    """The same PDF opened by PDFium (pypdfium2), the renderer that pdf_to_images falls back on."""
+    import pypdfium2 as pdfium
+
+    return pdfium.PdfDocument(str(pdf_data) if isinstance(pdf_data, Path) else pdf_data)
+
+
+def _draw_page(page, dpi: float):
+    """MuPDF's pixmap of a page at `dpi`. get_pixmap(dpi=) only takes a whole number, so a reduced resolution goes in as a scale instead."""
+    if dpi >= RENDER_DPI:
+        return page.get_pixmap(dpi=RENDER_DPI)
+    return page.get_pixmap(matrix=pymupdf.Matrix(dpi / 72, dpi / 72))
+
+
+def _render_dpi(width_points: float, height_points: float) -> float:
+    """The resolution to draw a page at: RENDER_DPI, or less when that would make the longest side more than MAX_RENDER_SIDE pixels."""
+    longest = max(width_points, height_points)
+    if longest <= 0:
+        return float(RENDER_DPI)
+    return min(float(RENDER_DPI), 72 * MAX_RENDER_SIDE / longest)
+
+
+def _render_with_pdfium(document, index: int) -> bytes:
+    """Page `index` (0-based) of a PDFium document as PNG bytes at RENDER_DPI (less for a page whose box is absurdly large)."""
+    page = document[index]
+    try:
+        width, height = page.get_size()
+        image = page.render(scale=_render_dpi(width, height) / 72).to_pil().convert("RGB")
+    finally:
+        page.close()
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def ocr_page(image_bytes: bytes, page_num: int) -> str:

@@ -1602,6 +1602,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pymupdf" },
     { name = "pypdf" },
+    { name = "pypdfium2" },
     { name = "pytesseract" },
     { name = "pytest" },
     { name = "python-dotenv" },
@@ -1620,6 +1621,9 @@ paddle = [
     { name = "paddleocr" },
     { name = "paddlepaddle" },
 ]
+photos = [
+    { name = "opencv-python-headless" },
+]
 surya = [
     { name = "surya-ocr" },
 ]
@@ -1631,6 +1635,7 @@ requires-dist = [
     { name = "google-api-python-client", specifier = ">=2.140" },
     { name = "google-auth", specifier = ">=2.34" },
     { name = "google-genai", specifier = ">=1.0" },
+    { name = "opencv-python-headless", marker = "extra == 'photos'", specifier = ">=4.8" },
     { name = "paddleocr", marker = "extra == 'paddle'", specifier = ">=3.7.0" },
     { name = "paddlepaddle", marker = "extra == 'paddle'", specifier = ">=3.3.1" },
     { name = "pgvector", specifier = ">=0.4" },
@@ -1639,6 +1644,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.8" },
     { name = "pymupdf", specifier = ">=1.24" },
     { name = "pypdf", specifier = ">=6.21.0" },
+    { name = "pypdfium2", specifier = ">=5.10" },
     { name = "pytesseract", specifier = ">=0.3.13" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "python-dotenv" },
@@ -1647,7 +1653,7 @@ requires-dist = [
     { name = "surya-ocr", marker = "extra == 'surya'", specifier = ">=0.23.0" },
     { name = "uvicorn" },
 ]
-provides-extras = ["easyocr", "paddle", "local-embeddings", "surya"]
+provides-extras = ["easyocr", "paddle", "local-embeddings", "surya", "photos"]
 
 [[package]]
 name = "mdurl"

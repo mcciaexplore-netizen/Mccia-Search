@@ -25,6 +25,7 @@ from db.connection import get_pooled_connection
 from ingest.drive_sync import _fetch_chunk, build_drive_service, stream_pdf
 
 PAGE_DPI = 150  # sharp enough to read small print; the OCR itself reads at 200
+MAX_PAGE_SIDE = 3500  # longest side in pixels: a page whose box is absurdly large (one is 300 times too big) is drawn smaller, see ingest/ocr.py
 JPEG_QUALITY = 80
 MAX_CACHE_BYTES = 500 * 1024 * 1024
 BLOCK_SIZE = 1024 * 1024  # bytes fetched per range request
@@ -301,7 +302,13 @@ def _draw(pdf: bytes, index: int, page_number: int, filename: str) -> bytes:
         with pymupdf.open(stream=pdf, filetype="pdf") as doc:
             if index > doc.page_count:
                 raise PageNotFound(f"{filename} has only {doc.page_count} pages.")
-            pixmap = doc[index - 1].get_pixmap(dpi=PAGE_DPI)
+            page = doc[index - 1]
+            longest = max(page.rect.width, page.rect.height)
+            if longest > 0 and PAGE_DPI / 72 * longest > MAX_PAGE_SIDE:
+                scale = MAX_PAGE_SIDE / longest  # get_pixmap(dpi=) takes whole numbers only, so a reduced size goes in as a scale
+                pixmap = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale))
+            else:
+                pixmap = page.get_pixmap(dpi=PAGE_DPI)
             return pixmap.tobytes("jpeg", jpg_quality=JPEG_QUALITY)
     except PageNotFound:
         raise

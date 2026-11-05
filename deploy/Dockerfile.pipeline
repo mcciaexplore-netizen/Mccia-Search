@@ -1,0 +1,22 @@
+# The unattended job runner (ops/pipeline.py): Tesseract OCR, the bge-m3 fill, Gemini embeddings and the photo pilot, on CPU. Build it on the server, from the
+# repository root (it copies the server's own .env and credentials.json into the image, like the other images):
+#   docker build -f deploy/Dockerfile.pipeline -t mccia-pipeline .
+# Models (bge-m3, Florence-2, CLIP: about 4.5 GB) are NOT in the image: they sit in a folder mounted at /models. Progress lives in a folder mounted at /state.
+FROM python:3.12-slim
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-mar tesseract-ocr-hin tesseract-ocr-eng libgl1 libglib2.0-0 libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir uv
+# torch first, from PyTorch's CPU-only index: the default build drags in several GB of NVIDIA GPU libraries this server cannot use.
+RUN uv pip install --system torch torchvision --index-url https://download.pytorch.org/whl/cpu
+COPY backend/pyproject.toml .
+RUN uv pip install --system -r pyproject.toml --extra local-embeddings --extra photos
+# The build stops here if a GPU build of torch slipped in, or if Tesseract lacks Marathi, Hindi or English.
+RUN python -c "import importlib.util as u, torch; assert '+cpu' in torch.__version__, torch.__version__; assert u.find_spec('nvidia') is None, 'NVIDIA libraries were installed'" \
+    && tesseract --list-langs | grep -qx mar && tesseract --list-langs | grep -qx hin && tesseract --list-langs | grep -qx eng
+COPY backend/ ./backend/
+COPY .env .env
+COPY credentials.json ./credentials.json
+ENV HF_HOME=/models PIPELINE_STATE=/state
+WORKDIR /app/backend
+CMD ["python", "-m", "ops.pipeline"]
