@@ -19,6 +19,7 @@ from config import GEMINI_API_KEY, GEMINI_EMBEDDING_MODEL
 from db.connection import get_pooled_connection
 from embedding_engine import (
     GEMINI_DIMENSION,
+    column,
     embed_local,
     ensure_matches_database,
     min_similarity,
@@ -63,16 +64,18 @@ _KEYWORD_SCORE = """
     CROSS JOIN LATERAL (SELECT n.norm AS norm, to_tsvector('simple', n.norm) AS tsv) v
 """
 
+# {column} is the column of chunks that holds the vectors of the engine in use (embedding for Gemini, embedding_bge for bge-m3): see
+# _sql(). It is one of a fixed set of names, never something a caller supplies.
 _SEARCH_SQL = """
     WITH candidates AS (
       SELECT
         c.id, c.content, c.page_number, c.chunk_index,
         d.filename, d.drive_file_id, c.document_id,
-        1 - (c.embedding <=> %(query)s::vector) AS similarity
+        1 - (c.{column} <=> %(query)s::vector) AS similarity
       FROM chunks c
       JOIN documents d ON d.id = c.document_id
-      WHERE 1 - (c.embedding <=> %(query)s::vector) >= %(min_similarity)s
-      ORDER BY c.embedding <=> %(query)s::vector
+      WHERE 1 - (c.{column} <=> %(query)s::vector) >= %(min_similarity)s
+      ORDER BY c.{column} <=> %(query)s::vector
       LIMIT %(candidates)s
     )
 """ + _KEYWORD_SCORE
@@ -82,7 +85,7 @@ _SEARCH_SQL = """
 # which can leave too few; the MATERIALIZED pool is an exact search over just those documents.
 _DOCUMENT_SEARCH_SQL = """
     WITH pool AS MATERIALIZED (
-      SELECT id, content, page_number, chunk_index, document_id, embedding
+      SELECT id, content, page_number, chunk_index, document_id, {column} AS embedding
       FROM chunks
       WHERE document_id = ANY(%(document_ids)s)
     ),
@@ -302,6 +305,12 @@ def rank(rows: list[tuple], top_k: int) -> list[dict]:
     return results[:top_k]
 
 
+def _sql(params: dict) -> str:
+    """The search to run for these parameters, reading the column of the engine in use."""
+    template = _DOCUMENT_SEARCH_SQL if "document_ids" in params else _SEARCH_SQL
+    return template.replace("{column}", column())
+
+
 def _run_search(params: dict) -> list[tuple]:
     """Run the similarity query on a pooled connection.
 
@@ -310,7 +319,7 @@ def _run_search(params: dict) -> list[tuple]:
     """
     for attempt in (1, 2):
         try:
-            sql = _DOCUMENT_SEARCH_SQL if "document_ids" in params else _SEARCH_SQL
+            sql = _sql(params)
             with get_pooled_connection() as conn:
                 return conn.execute(sql, params).fetchall()
         except PoolTimeout:

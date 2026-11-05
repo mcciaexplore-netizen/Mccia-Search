@@ -1,34 +1,26 @@
-"""Re-embed every chunk with BAAI/bge-m3, on this machine (1024 dimensions, free).
+"""Embed every chunk with BAAI/bge-m3 on this machine (1024 dimensions, free), without disturbing the live site.
 
-Needed once, when the database still holds Gemini vectors (768 dimensions): vectors from
-different models cannot be compared, so every chunk has to be embedded again.
+    uv run python -m ingest.reembed_all                # shows how far it is, changes nothing
+    uv run python -m ingest.reembed_all --yes          # fills the new column, then builds its search index
+    uv run python -m ingest.reembed_all --yes --limit 64   # a short trial first: embeds only 64 chunks
 
-    uv run python -m ingest.reembed_all          # shows the plan and changes nothing
-    uv run python -m ingest.reembed_all --yes    # does it (EMBEDDING_ENGINE=bge must be set)
+Needs EMBEDDING_ENGINE=bge in .env and `uv sync --extra local-embeddings`.
+
+The vectors go into a column of their own, chunks.embedding_bge, next to Gemini's chunks.embedding. Nothing of Gemini's is deleted
+or changed, and no document's status is touched, so a site that searches with Gemini keeps working, exactly as before, for as long as
+this runs (and after it). Only a backend started with EMBEDDING_ENGINE=bge reads the new column. Going live is therefore just starting
+that backend, and going back is starting the Gemini one again: the database needs no change either way.
 
 What it does:
-  1. Once: drops every stored vector, widens chunks.embedding to vector(1024) and records
-     bge-m3 as the model behind the vectors. Documents that were completed become
-     'text_saved' (shown as waiting for embeddings) until all their chunks have a new vector.
-  2. Embeds every chunk that has no vector, 8 at a time. This covers the chunks of completed and
-     text_saved documents, and any other chunk (a failed document's, or one saved meanwhile).
-  3. Builds the search index and marks the documents completed again.
+  1. Adds the column if the database does not have it yet (empty, nullable: instant).
+  2. Embeds every chunk whose embedding_bge is empty, 32 at a time (the model reads 8 at once), each batch saved as soon as it is done.
+  3. When no chunk is left, builds the search index on the column (a few minutes; writes to chunks wait meanwhile, searches do not).
 
-It is safe to stop (Ctrl-C) and run again, with or without --yes: the first step happens only
-once, so a run carries on with the chunks that still have no vector. Two runs at once share
-the work.
+It is safe to stop (Ctrl-C) and run again: it carries on with the chunks that are still empty, and so it also catches up with issues
+ingested after an earlier run. Run it once more right before going live to pick up anything added meanwhile.
 
-The old vectors cannot be brought back (Gemini would have to be paid again), and while this
-runs, search finds only the chunks that are already done. A server still set up for Gemini
-cannot search at all until it runs the new code with EMBEDDING_ENGINE=bge.
-Roughly 0.5 s per chunk on a Mac with Apple's GPU, 1 s on a plain CPU: hours for the full archive
-(measured on an Apple M2, 5 Nov 2026: 0.43 s per chunk, about 4.6 hours for 39,002 chunks).
-
-WARNING, if people are using the site that reads this database: for all those hours its search finds
-nothing, its documents show as waiting for embeddings, and the running backend (still on Gemini) fails
-every question once the column has changed. For a live site use the shadow-column method in
-docs/embeddings-bge-m3.md instead: it fills a second column in the background while search keeps
-working, then switches in one short step.
+Speed, measured on an Apple M2 on 5 Nov 2026: about 0.43 s per chunk, so about 4.6 hours for the 39,002 chunks. A MacBook that goes to
+sleep stops it (the work already saved is kept); keep it awake with: caffeinate -i uv run python -m ingest.reembed_all --yes
 """
 
 import argparse
@@ -36,141 +28,113 @@ import sys
 import time
 
 import embedding_engine
-from db.connection import get_connection
-from ingest.embed_pending import EmbeddingStopped, _embed_one_batch, _finish_documents
+from db.connection import get_connection, init_db
+from ingest.embed_pending import EmbeddingStopped, _embed_one_batch
 
-PROGRESS_EVERY = 5  # batches between progress lines
+FETCH_SIZE = 32  # chunks taken and saved together; the model itself reads embedding_engine.BATCH_SIZES["bge"] of them at once
+PROGRESS_EVERY = 4  # fetches between progress lines
+INDEX_NAME = "chunks_embedding_bge_idx"
+INDEX_MEMORY = "256MB"  # maintenance_work_mem for the index build: faster than the default, and safe on a small database server
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--yes", action="store_true", help="really start (without it, only show the plan)")
-    parser.add_argument(
-        "--batch-size", type=int, default=embedding_engine.BATCH_SIZES["bge"],
-        help="chunks the model reads at once (default %(default)s)",
-    )
+    parser.add_argument("--yes", action="store_true", help="really start (without it, only show where things stand)")
+    parser.add_argument("--limit", type=int, default=None, help="stop after this many chunks (a trial run)")
+    parser.add_argument("--fetch-size", type=int, default=FETCH_SIZE, help="chunks taken and saved together (default %(default)s)")
     args = parser.parse_args(argv)
-    if args.batch_size < 1:
-        parser.error("--batch-size must be at least 1")
+    if args.fetch_size < 1 or (args.limit is not None and args.limit < 1):
+        parser.error("--fetch-size and --limit must be at least 1")
 
     if embedding_engine.engine() != "bge":
         print(f"EMBEDDING_ENGINE is {embedding_engine.engine()!r}. Set EMBEDDING_ENGINE=bge in .env first.")
         return 2
-    width, model = embedding_engine.dimension(), embedding_engine.model_id()
 
-    with get_connection() as conn:
-        found_width = _column_width(conn)
-        recorded = _recorded_model(conn)
-        total = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-        completed = conn.execute("SELECT COUNT(*) FROM documents WHERE status = 'completed'").fetchone()[0]
-        missing = _count_missing(conn)
-    migrated = found_width == width and recorded == model
-    print(f"Model for new vectors: {model} ({width} dimensions)")
-    print(f"Database: vectors are {found_width} dimensions, made by {recorded or '(none recorded)'}")
-    print(f"Chunks: {total} ({missing if migrated else total} to embed)")
-
-    if not migrated:
-        if not args.yes:
+    state = _state()
+    _print_state(state)
+    if not args.yes:
+        if state["missing"] == 0 and state["has_column"]:
+            print("\nNothing to embed." + ("" if state["has_index"] else " Run with --yes to build the search index."))
+        else:
             print(
-                f"\nThis would DELETE the vectors of all {total} chunks, set the column to "
-                f"vector({width}) and re-embed every chunk with {model}.\n"
-                "Search is incomplete until it has finished (hours: about 0.4 s per chunk on an Apple M2).\n"
-                "If a live site reads this database, it stops finding anything until then: read docs/embeddings-bge-m3.md first.\n"
-                "Run again with --yes to do it."
+                f"\nThis would embed {state['missing']} chunks into chunks.embedding_bge "
+                f"(about {state['missing'] * 0.43 / 3600:.1f} hours on an Apple M2) and leave everything else alone.\n"
+                "Gemini's vectors and the documents are not touched: the live site keeps working. Run again with --yes to do it."
             )
-            return 0
-        with get_connection() as conn, conn.transaction():
-            _drop_vectors(conn, width)
-            embedding_engine.record_model(conn)
-        print(f"Dropped the old vectors; chunks.embedding is now vector({width}). {completed} documents wait for their new vectors.")
-        missing = total
-    elif missing == 0:
-        print("Nothing to embed: every chunk already has its bge-m3 vector.")
-        return _finish() if _needs_finishing() else 0
-    else:
-        print("Carrying on from an earlier run.")
+        return 0
 
-    done, started, batches = 0, time.monotonic(), 0
+    init_db()  # adds chunks.embedding_bge if this database does not have it yet
+    embedding_engine.ensure_matches_database()
+    missing = _state()["missing"]
+    if missing == 0:
+        print("Nothing to embed: every chunk already has its bge-m3 vector.")
+        return _finish()
+    target = min(missing, args.limit) if args.limit else missing
+    print(f"\nEmbedding {target} of {missing} chunks that have no bge-m3 vector yet. Ctrl-C stops it; run it again to carry on.")
+
+    done, started, fetches = 0, time.monotonic(), 0
     try:
-        while True:
-            claimed = _embed_one_batch(args.batch_size)
+        while done < target:
+            claimed = _embed_one_batch(min(args.fetch_size, target - done), finish_documents=False)
             if claimed == 0:
                 break
-            done, batches = done + claimed, batches + 1
-            if batches % PROGRESS_EVERY == 0:
+            done, fetches = done + claimed, fetches + 1
+            if fetches % PROGRESS_EVERY == 0:
                 rate = done / (time.monotonic() - started)
-                left = max(missing - done, 0)
-                print(f"  {done}/{missing}  {rate * 60:.0f} chunks/min  about {left / rate / 3600:.1f} h to go", flush=True)
+                print(f"  {done}/{target}  {rate * 60:.0f} chunks/min  about {max(target - done, 0) / rate / 3600:.1f} h to go", flush=True)
     except EmbeddingStopped as exc:
         print(f"Stopped after {done} chunks: {exc}\nRun it again to carry on from here.")
         return 1
     except KeyboardInterrupt:
-        print(f"Interrupted after {done} chunks. Run it again to carry on.")
+        print(f"Interrupted after {done} chunks (they are saved). Run it again to carry on.")
         return 130
 
-    print(f"Embedded {done} chunks.")
+    print(f"Embedded {done} chunks in {(time.monotonic() - started) / 60:.1f} min.")
+    if args.limit and done < missing:
+        print(f"{missing - done} chunks still to do (this was a trial run: run again without --limit).")
+        return 0
     return _finish()
 
 
-def _drop_vectors(conn, width: int) -> None:
-    """Empty chunks.embedding and set its width, and mark completed documents as waiting.
-
-    The column is rewritten, which also gives back the space the old vectors took. Run in one
-    transaction by the caller: either all of this happens or none of it.
-    """
-    conn.execute("DROP INDEX IF EXISTS chunks_embedding_idx")  # rebuilt at the end, not once per update
-    conn.execute("ALTER TABLE chunks ALTER COLUMN embedding DROP NOT NULL")
-    conn.execute(f"ALTER TABLE chunks ALTER COLUMN embedding TYPE vector({width}) USING NULL::vector({width})")
-    conn.execute("UPDATE documents SET status = 'text_saved' WHERE status = 'completed'")
-
-
 def _finish() -> int:
-    """Build the search index, mark documents completed, and check that no chunk lacks a vector."""
-    print("Building the search index...")
-    with get_connection() as conn:
-        conn.autocommit = True  # an index build is not part of a transaction here
-        conn.execute("CREATE INDEX IF NOT EXISTS chunks_embedding_idx ON chunks USING hnsw (embedding vector_cosine_ops)")
-    with get_connection() as conn:
-        finished = _finish_documents(conn)
-        conn.commit()
-        missing = _count_missing(conn)
-        total = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-    if missing:
-        print(f"{missing} chunks still have no vector (saved while this ran?). Run it again.")
+    """Build the search index once every chunk has its vector, and report where things stand."""
+    state = _state()
+    if state["missing"]:
+        print(f"{state['missing']} chunks still have no bge-m3 vector (saved while this ran?). Run it again.")
         return 1
-    print(f"Done: all {total} chunks are embedded by {embedding_engine.model_id()}; {finished} documents are completed again.")
+    if not state["has_index"]:
+        print(f"Building the search index {INDEX_NAME} (a few minutes; searches keep working)...")
+        started = time.monotonic()
+        with get_connection() as conn:
+            conn.autocommit = True  # an index build cannot run inside a transaction block here
+            conn.execute("SET statement_timeout = 0")
+            conn.execute(f"SET maintenance_work_mem = '{INDEX_MEMORY}'")
+            conn.execute(f"CREATE INDEX IF NOT EXISTS {INDEX_NAME} ON chunks USING hnsw (embedding_bge vector_cosine_ops)")
+        print(f"Index built in {(time.monotonic() - started) / 60:.1f} min.")
+    state = _state()
+    print(f"Done: all {state['total']} chunks have a bge-m3 vector and the search index exists.")
+    print("The live site is unchanged. Compare the two:  uv run python -m ingest.compare_embeddings --audit 40")
     return 0
 
 
-def _needs_finishing() -> bool:
-    """Whether the index or the documents' status were left unfinished by an interrupted run."""
+def _state() -> dict:
+    """Where the fill stands (reads only): whether the column and its index exist, and how many chunks have a vector."""
     with get_connection() as conn:
-        has_index = conn.execute("SELECT to_regclass('chunks_embedding_idx') IS NOT NULL").fetchone()[0]
-        waiting = conn.execute("SELECT COUNT(*) FROM documents WHERE status = 'text_saved'").fetchone()[0]
-    return not has_index or waiting > 0
+        has_column = conn.execute(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'chunks' AND column_name = 'embedding_bge')"
+        ).fetchone()[0]
+        total = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        filled = conn.execute("SELECT COUNT(embedding_bge) FROM chunks").fetchone()[0] if has_column else 0
+        has_index = conn.execute("SELECT to_regclass(%s) IS NOT NULL", (INDEX_NAME,)).fetchone()[0]
+    return {"has_column": has_column, "total": total, "filled": filled, "missing": total - filled, "has_index": has_index}
 
 
-def _column_width(conn) -> int | None:
-    """The number of dimensions chunks.embedding is declared with (None if it has no fixed width)."""
-    width = conn.execute(
-        "SELECT atttypmod FROM pg_attribute WHERE attrelid = 'chunks'::regclass AND attname = 'embedding'"
-    ).fetchone()[0]
-    return width if width > 0 else None
-
-
-def _recorded_model(conn) -> str | None:
-    """The model recorded behind the stored vectors; reads only, so a plan changes nothing."""
-    if conn.execute("SELECT to_regclass('embedding_meta') IS NOT NULL").fetchone()[0]:
-        row = conn.execute("SELECT model FROM embedding_meta").fetchone()
-        if row is not None:
-            return row[0]
-    # Chunks with no record were embedded by Gemini, before the record existed.
-    has_chunks = conn.execute("SELECT EXISTS (SELECT 1 FROM chunks)").fetchone()[0]
-    return f"gemini:{embedding_engine.GEMINI_EMBEDDING_MODEL}" if has_chunks else None
-
-
-def _count_missing(conn) -> int:
-    return conn.execute("SELECT COUNT(*) FROM chunks WHERE embedding IS NULL").fetchone()[0]
+def _print_state(state: dict) -> None:
+    print(f"Model for the new vectors: {embedding_engine.model_id()} ({embedding_engine.dimension()} dimensions)")
+    if not state["has_column"]:
+        print("Column chunks.embedding_bge: not there yet (--yes adds it)")
+    else:
+        print(f"Column chunks.embedding_bge: {state['filled']} of {state['total']} chunks filled; search index {'built' if state['has_index'] else 'not built yet'}")
 
 
 if __name__ == "__main__":

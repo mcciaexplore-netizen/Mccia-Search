@@ -14,6 +14,7 @@ from config import GEMINI_API_KEY, GEMINI_EMBEDDING_MODEL
 from db.connection import get_connection
 from embedding_engine import (
     GEMINI_DIMENSION,
+    column,
     dimension,
     embed_local,
     engine,
@@ -38,8 +39,9 @@ VALID_STATUSES = ("pending", "processing", "text_saved", "completed", "failed")
 
 _API_ERRORS = (genai_errors.APIError, httpx.HTTPError, OSError)
 
+# {column}: the column of the engine in use (embedding for Gemini, embedding_bge for bge-m3), see _insert_chunk().
 _INSERT_CHUNK = """
-    INSERT INTO chunks (document_id, chunk_index, content, page_number, embedding)
+    INSERT INTO chunks (document_id, chunk_index, content, page_number, {column})
     VALUES (%s, %s, %s, %s, %s::vector)
     ON CONFLICT (document_id, chunk_index) DO NOTHING
 """
@@ -110,7 +112,7 @@ def store_chunks(chunks: list[dict], embeddings: list[list[float]]) -> int:
         ]
         with get_connection() as conn, conn.transaction():
             with conn.cursor() as cur:
-                cur.executemany(_INSERT_CHUNK, rows)
+                cur.executemany(_INSERT_CHUNK.replace("{column}", column()), rows)
                 inserted = cur.rowcount
 
     print(f"[embed] stored {inserted} chunks in database")

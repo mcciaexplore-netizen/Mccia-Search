@@ -10,14 +10,14 @@ CREATE TABLE IF NOT EXISTS documents (
   status        TEXT DEFAULT 'pending'
 );
 
--- An existing database keeps the width it has: CREATE TABLE IF NOT EXISTS does not alter a table.
--- ingest.reembed_all changes it to 1024 and re-embeds every chunk with bge-m3.
+-- chunks.embedding holds the Gemini vectors (EMBEDDING_ENGINE=gemini, 768 dimensions; "local" makes 768 too). bge-m3 (EMBEDDING_ENGINE=bge)
+-- has a column of its own, embedding_bge, added below: the two sets sit side by side and nothing here changes when the engine does.
 CREATE TABLE IF NOT EXISTS chunks (
   id          BIGSERIAL PRIMARY KEY,
   document_id BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
   chunk_index INTEGER NOT NULL,
   content     TEXT NOT NULL,
-  embedding   vector(1024) NOT NULL,  -- BAAI/bge-m3 (EMBEDDING_ENGINE=bge); gemini and local make 768
+  embedding   vector(768) NOT NULL,  -- gemini-embedding-001 (EMBEDDING_ENGINE=gemini or local)
   page_number INTEGER,
   created_at  TIMESTAMPTZ DEFAULT now(),
   UNIQUE (document_id, chunk_index)
@@ -66,6 +66,19 @@ BEGIN
     WHERE table_name = 'chunks' AND column_name = 'embedding' AND is_nullable = 'NO'
   ) THEN
     ALTER TABLE chunks ALTER COLUMN embedding DROP NOT NULL;
+  END IF;
+END $$;
+
+-- BAAI/bge-m3's vectors (EMBEDDING_ENGINE=bge), filled by ingest.reembed_all while the site keeps searching with Gemini's. Added empty and
+-- nullable, which is instant and changes no row. Its search index (chunks_embedding_bge_idx) is NOT created here on purpose: a column
+-- that is indexed cannot be filled cheaply (every update would also write new entries into the Gemini index), so ingest.reembed_all
+-- builds it once the column is full. Checked first, so a startup does not lock the table when there is nothing to change.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns WHERE table_name = 'chunks' AND column_name = 'embedding_bge'
+  ) THEN
+    ALTER TABLE chunks ADD COLUMN embedding_bge vector(1024);
   END IF;
 END $$;
 

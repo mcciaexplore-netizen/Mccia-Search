@@ -3,8 +3,8 @@
 Sampada Search keeps everything in one Postgres database with the pgvector extension: `documents`, `chunks` (the page text and its 768-number
 vectors), `embedding_meta`, `users`, `audit_log` and `sso_used_jti`. This is how it was copied from Neon to Supabase, and how to do it again.
 
-**Status on 5 Nov 2026:** the copy on Supabase is verified and identical to Neon, but production (the EC2 backend) still reads from Neon until
-the cutover below is done. Neon stays untouched as the backup for at least a week after the cutover.
+**Status on 5 Nov 2026:** the cutover is done: production (the EC2 backend) reads from Supabase since that day, a 24-second window. Neon is untouched and
+holds the data as it was at the cutover; it stays as the backup for at least a week (until about 12 Nov 2026). The steps below are how it was done.
 
 ## What to know first
 

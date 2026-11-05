@@ -18,7 +18,7 @@ import time
 from pgvector import Vector
 
 from db.connection import get_connection, init_db
-from embedding_engine import ensure_matches_database
+from embedding_engine import column, ensure_matches_database
 from ingest.embedder import embed_texts
 
 BATCH_SIZE = 5  # chunks per embedding request
@@ -41,13 +41,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.delay < 0:
         parser.error("--delay cannot be negative")
 
-    init_db()  # makes sure chunks.embedding may be empty, however this database was made
+    init_db()  # makes sure chunks.embedding may be empty, and that the bge column exists, however this database was made
     ensure_matches_database()  # new vectors must come from the model behind the stored ones
 
     with get_connection() as conn:
         todo = _count_missing(conn)
         documents = conn.execute(
-            "SELECT COUNT(DISTINCT document_id) FROM chunks WHERE embedding IS NULL"
+            f"SELECT COUNT(DISTINCT document_id) FROM chunks WHERE {column()} IS NULL"
         ).fetchone()[0]
         _finish_documents(conn)  # a document whose last chunk was embedded before an interruption
         conn.commit()
@@ -78,15 +78,17 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _embed_one_batch(batch_size: int) -> int:
-    """Embed the next chunks that have no vector; returns how many it handled (0 when none left).
+def _embed_one_batch(batch_size: int, finish_documents: bool = True) -> int:
+    """Embed the next chunks that have no vector (in the engine's column); returns how many it handled (0 when none left).
 
     The chunks are locked while they are embedded (SKIP LOCKED), so a second run takes
     other chunks instead of paying for the same ones. A failed batch changes nothing.
+    finish_documents=False leaves every document's status alone (ingest.reembed_all fills a second set of vectors while the
+    site keeps using the first, so it must not mark anything completed).
     """
     with get_connection() as conn, conn.transaction():
         rows = conn.execute(
-            "SELECT id, content FROM chunks WHERE embedding IS NULL "
+            f"SELECT id, content FROM chunks WHERE {column()} IS NULL "
             "ORDER BY document_id, chunk_index LIMIT %s FOR UPDATE SKIP LOCKED",
             (batch_size,),
         ).fetchall()
@@ -94,10 +96,11 @@ def _embed_one_batch(batch_size: int) -> int:
             return 0
         vectors = _embed_with_retries([content for _, content in rows])
         conn.cursor().executemany(
-            "UPDATE chunks SET embedding = %s::vector WHERE id = %s",
+            f"UPDATE chunks SET {column()} = %s::vector WHERE id = %s",
             [(Vector(vector).to_text(), chunk_id) for (chunk_id, _), vector in zip(rows, vectors)],
         )
-        _finish_documents(conn)
+        if finish_documents:
+            _finish_documents(conn)
     return len(rows)
 
 
@@ -117,17 +120,17 @@ def _embed_with_retries(texts: list[str]) -> list[list[float]]:
 def _finish_documents(conn) -> int:
     """Mark documents 'completed' once none of their chunks lacks a vector; returns how many."""
     cur = conn.execute(
-        """
+        f"""
         UPDATE documents SET status = 'completed'
         WHERE status = 'text_saved'
-          AND NOT EXISTS (SELECT 1 FROM chunks c WHERE c.document_id = documents.id AND c.embedding IS NULL)
+          AND NOT EXISTS (SELECT 1 FROM chunks c WHERE c.document_id = documents.id AND c.{column()} IS NULL)
         """
     )
     return cur.rowcount
 
 
 def _count_missing(conn) -> int:
-    return conn.execute("SELECT COUNT(*) FROM chunks WHERE embedding IS NULL").fetchone()[0]
+    return conn.execute(f"SELECT COUNT(*) FROM chunks WHERE {column()} IS NULL").fetchone()[0]
 
 
 if __name__ == "__main__":

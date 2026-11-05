@@ -2,7 +2,8 @@
 
 Needed once when EMBEDDING_ENGINE (or LOCAL_EMBEDDING_MODEL) changes: vectors from different
 models cannot be compared, so the database must be embedded by a single model. It only works
-between models of the same width (768 dimensions); for bge-m3 (1024) use ingest.reembed_all.
+between models of the same width (768 dimensions). bge-m3 (1024) needs no re-embedding of this kind: it has a column of its own,
+filled by ingest.reembed_all.
 
     uv run python -m ingest.reembed          # shows the plan and changes nothing
     uv run python -m ingest.reembed --yes    # does it
@@ -36,7 +37,7 @@ def main(argv: list[str] | None = None) -> int:
     if embedding_engine.dimension() != 768:
         print(
             f"EMBEDDING_ENGINE={embedding_engine.engine()} makes {embedding_engine.dimension()}-dimension "
-            "vectors, which do not fit the 768-dimension column. Use: uv run python -m ingest.reembed_all"
+            "vectors, which do not fit the 768-dimension column. bge-m3 has a column of its own: uv run python -m ingest.reembed_all"
         )
         return 2
 

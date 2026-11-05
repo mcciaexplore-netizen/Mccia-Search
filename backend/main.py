@@ -1,5 +1,6 @@
 """FastAPI application entry point for the MCCIA RAG chatbot."""
 
+import threading
 import time
 from contextlib import asynccontextmanager
 
@@ -9,6 +10,7 @@ from fastapi.responses import FileResponse
 
 import audit
 import auth
+import embedding_engine
 import keepwarm
 import pages
 import sso
@@ -31,6 +33,24 @@ from models.schemas import (
 )
 
 
+def _prepare_embeddings() -> None:
+    """Say how many chunks have a vector for the engine in use, and (bge-m3, local) load the model before the first question.
+
+    In the background, so the server answers /health at once: loading takes 10-30 s and about 2 GB of memory. A question that
+    arrives meanwhile waits for the same load instead of starting its own. Nothing here can stop the server.
+    """
+    try:
+        have, total = embedding_engine.coverage()
+        warning = "" if have == total else f" - WARNING: {total - have} chunks have no vector and cannot be found"
+        print(f"[startup] embedding engine {embedding_engine.engine()}: {have} of {total} chunks have a vector{warning}")
+        started = time.monotonic()
+        embedding_engine.warm_up()
+        if embedding_engine.uses_local_model():
+            print(f"[startup] the {embedding_engine.engine()} model is ready ({time.monotonic() - started:.0f}s)")
+    except Exception as exc:  # a missing column or package is reported on the first question; it must not stop the server
+        print(f"[startup] embedding check failed: {str(exc)[:300]}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     validate_config()
@@ -51,6 +71,7 @@ async def lifespan(app: FastAPI):
     get_pool()  # warm up the pool on startup
     print("[startup] database pool ready")
     print("[startup] mccia-search ready")
+    threading.Thread(target=_prepare_embeddings, name="prepare-embeddings", daemon=True).start()
     keepwarm.start()  # a cheap GET to the web app every few minutes, so its sign-in function is not cold
     yield
     keepwarm.stop()
