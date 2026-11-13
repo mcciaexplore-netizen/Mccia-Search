@@ -25,7 +25,7 @@ function outcome(entry: AuditEntry): { label: string; className: string } {
   if (entry.event === "chat") {
     return entry.found
       ? { label: "Answered", className: "bg-emerald-100 text-emerald-800" }
-      : { label: "Not found", className: "bg-accent/15 text-ink" };
+      : { label: "Not found", className: "bg-warn/15 text-ink" };
   }
   return { label: "OK", className: "bg-emerald-100 text-emerald-800" };
 }
@@ -101,7 +101,7 @@ export default function AuditLog() {
       </div>
 
       {error && (
-        <div role="alert" className="mt-6 rounded-xl border border-accent/40 bg-accent/10 px-4 py-4 text-base text-ink">
+        <div role="alert" className="mt-6 rounded-xl border border-warn/40 bg-warn/10 px-4 py-4 text-base text-ink">
           Could not load the audit log.{" "}
           <button type="button" onClick={() => void load(false, filter, 0)} className="font-semibold text-primary underline underline-offset-2">
             Try again

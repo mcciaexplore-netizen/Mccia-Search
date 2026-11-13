@@ -14,6 +14,9 @@ import { useMediaQuery } from "@/lib/useMediaQuery";
 
 type View = "chat" | "settings";
 
+// Whether the person collapsed the sidebar on a wide window, remembered in this browser (a convenience: it works without it).
+const COLLAPSE_KEY = "mccia-sidebar-collapsed";
+
 // The page panel sits beside the chat from this width up (slimmer below 1280px). On a
 // narrower window there is no room for it, so it slides over the chat instead: by itself when
 // an answer arrives, from this width up (where the answer stays in view), and otherwise with
@@ -50,6 +53,28 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
   // The window's width is only known once mounted; until then no button, so it does not flash.
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+
+  // The desktop sidebar can be collapsed (the mobile one is the slide-out drawer, `sidebarOpen`). A remembered "collapsed" is applied
+  // first without animation, and the slide is switched on a moment later, so a returning visitor does not see it slide shut on load.
+  const [collapsed, setCollapsed] = useState(false);
+  const [animate, setAnimate] = useState(false);
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(COLLAPSE_KEY) === "1") setCollapsed(true);
+    } catch {
+      /* storage can be blocked: the sidebar then starts open */
+    }
+    const frame = window.requestAnimationFrame(() => setAnimate(true));
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+  const changeCollapsed = (value: boolean) => {
+    setCollapsed(value);
+    try {
+      window.localStorage.setItem(COLLAPSE_KEY, value ? "1" : "0");
+    } catch {
+      /* not remembered, still works */
+    }
+  };
 
   // The history comes from this browser's storage, so it can only be read after mounting.
   useEffect(() => {
@@ -152,11 +177,18 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [drawerShown]);
 
+  const initials = user
+    ? user.name.split(/\s+/).filter(Boolean).slice(0, 2).map((word) => Array.from(word)[0]).join("").toUpperCase() || "?"
+    : "";
+
   return (
-    <div className="min-h-dvh bg-page">
+    <div className="relative isolate min-h-dvh bg-page">
+      {/* The soft shapes the glass panels blur. */}
+      <div aria-hidden="true" className="app-backdrop pointer-events-none fixed inset-0 -z-10" />
+
       {sidebarOpen && (
         <div
-          className="fixed inset-0 z-30 bg-black/40 md:hidden"
+          className="fixed inset-0 z-30 animate-fade-in bg-primary/40 backdrop-blur-[2px] md:hidden"
           aria-hidden="true"
           onClick={() => setSidebarOpen(false)}
         />
@@ -164,27 +196,51 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
 
       <aside
         id="sidebar"
-        className={`fixed inset-y-0 left-0 z-40 flex w-72 flex-col bg-primary text-white transition-[transform,visibility] duration-200 md:visible md:translate-x-0 ${
-          sidebarOpen ? "translate-x-0" : "invisible -translate-x-full"
+        className={`fixed inset-y-0 left-0 z-40 flex w-[280px] max-w-[85vw] flex-col border-r border-white/70 bg-white/85 shadow-glass backdrop-blur-xl will-change-transform md:bg-white/70 ${
+          animate ? "transition-[transform,visibility] duration-sidebar ease-out" : ""
+        } ${sidebarOpen ? "translate-x-0" : "invisible -translate-x-full"} ${
+          collapsed ? "md:invisible md:-translate-x-full" : "md:visible md:translate-x-0"
         }`}
       >
-        <div className="p-5 pb-3">
+        <div className="px-4 pb-3 pt-4">
           {user?.hubUrl && (
-            <a href={user.hubUrl} className="mb-2 inline-flex items-center gap-1 rounded text-xs text-white/70 transition-colors hover:text-[#2a6b7c] focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">
+            <a href={user.hubUrl} className="mb-2 inline-flex items-center gap-1 rounded text-xs font-medium text-muted transition-colors hover:text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
               <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5"><path d="M15 18l-6-6 6-6" /></svg>
               App Hub
             </a>
           )}
-          <div className="rounded-xl bg-white px-4 py-3 shadow-sm">
-            <Logo width={176} />
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1 rounded-xl bg-white px-3.5 py-2.5 shadow-sm ring-1 ring-black/5">
+              <Logo width={160} />
+            </div>
+            {/* Wide windows collapse the sidebar; narrow ones close the drawer. */}
+            <button
+              type="button"
+              onClick={() => changeCollapsed(true)}
+              aria-label="Collapse sidebar"
+              aria-controls="sidebar"
+              aria-expanded={!collapsed}
+              className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-black/5 hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent md:flex"
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5"><path d="M11 17l-5-5 5-5M18 17l-5-5 5-5" /></svg>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(false)}
+              aria-label="Close menu"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-black/5 hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent md:hidden"
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-5 w-5"><path d="M6 6l12 12M18 6L6 18" /></svg>
+            </button>
           </div>
-          <p className="mt-2.5 text-base font-semibold tracking-wider text-accent">AI Search</p>
+          <p className="mt-2.5 px-0.5 text-sm font-semibold tracking-wider text-accent">AI Search</p>
 
           <button
             type="button"
             onClick={startNewChat}
-            className="mt-4 w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-ink transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors duration-150 hover:bg-accent-dark focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" className="h-4 w-4"><path d="M12 5v14M5 12h14" /></svg>
             New Chat
           </button>
         </div>
@@ -195,44 +251,63 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
             activeId={view === "chat" ? activeId : null}
             onOpen={openChat}
             onDelete={deleteChat}
-            onClearAll={clearHistory}
           />
         </div>
 
-        <div className="border-t border-white/15 p-3">
+        <div className="space-y-1 border-t border-black/5 p-3">
+          {chats.length > 0 && (
+            <button
+              type="button"
+              onClick={clearHistory}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium text-muted transition-colors hover:bg-black/[0.04] hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                <path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M9 7V4h6v3" />
+              </svg>
+              Clear history
+            </button>
+          )}
+          {canOpenSettings && (
+            <button
+              type="button"
+              onClick={openSettings}
+              aria-current={view === "settings" ? "page" : undefined}
+              className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
+                view === "settings" ? "bg-accent/10 text-primary" : "text-muted hover:bg-black/[0.04] hover:text-primary"
+              }`}
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z" />
+              </svg>
+              Settings
+            </button>
+          )}
           {user && (
-            <div className="mb-2 rounded-lg bg-white/10 px-3 py-2.5 text-sm">
-              <p className="truncate font-semibold" title={user.name}>{user.name}</p>
-              <p className="truncate text-xs text-white/70" title={user.email}>{user.email}</p>
+            <div className="mt-1 rounded-xl bg-white/70 p-2.5 ring-1 ring-black/5">
+              <div className="flex items-center gap-3">
+                <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-white">
+                  {initials}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-primary" title={user.name}>{user.name}</p>
+                  <p className="truncate text-xs text-muted" title={user.email}>{user.email}</p>
+                </div>
+              </div>
               <div className="mt-2 flex items-center gap-3 text-xs font-medium">
                 {hubUrl && !user.hubUrl && (
-                  <a href={hubUrl} className="rounded underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">
+                  <a href={hubUrl} className="rounded text-muted underline-offset-2 hover:text-accent hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
                     Back to App Hub
                   </a>
                 )}
                 <form method="post" action="/api/logout" className="ml-auto">
-                  <button type="submit" className="rounded underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">
+                  <button type="submit" className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-muted transition-colors hover:bg-black/5 hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+                    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9" /></svg>
                     Log out
                   </button>
                 </form>
               </div>
             </div>
-          )}
-          {canOpenSettings && (
-          <button
-            type="button"
-            onClick={openSettings}
-            aria-current={view === "settings" ? "page" : undefined}
-            className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-white ${
-              view === "settings" ? "bg-white/15" : "hover:bg-white/10"
-            }`}
-          >
-            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z" />
-            </svg>
-            Settings
-          </button>
           )}
         </div>
       </aside>
@@ -250,7 +325,7 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
 
       {drawerShown && panel && (
         <>
-          <div className="fixed inset-0 z-40 bg-black/40" aria-hidden="true" onClick={() => setDrawerOpen(false)} />
+          <div className="fixed inset-0 z-40 animate-fade-in bg-primary/40 backdrop-blur-[2px]" aria-hidden="true" onClick={() => setDrawerOpen(false)} />
           <PagePanel
             layout="drawer"
             sources={panel.sources}
@@ -267,7 +342,7 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
         <button
           type="button"
           onClick={() => (wide ? setClosedFor(null) : setDrawerOpen(true))}
-          className="fixed bottom-28 right-4 z-20 flex items-center gap-2 rounded-full bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-lg transition hover:bg-primary/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          className="fixed bottom-36 right-4 z-20 flex animate-fade-in items-center gap-2 rounded-full bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-lift transition-colors hover:bg-primary/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         >
           <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
             <path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" />
@@ -276,15 +351,33 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
         </button>
       )}
 
-      <main className={`flex h-dvh flex-col md:pl-72 ${sidebarShown ? "lg:pr-[22rem] xl:pr-[26rem]" : ""}`}>
-        <header className="flex items-center gap-3 bg-primary px-4 py-3 text-white md:hidden">
+      {/* With the sidebar collapsed on a wide window, this brings it back. */}
+      {mounted && collapsed && (
+        <button
+          type="button"
+          onClick={() => changeCollapsed(false)}
+          aria-label="Expand sidebar"
+          aria-controls="sidebar"
+          aria-expanded={false}
+          className="fixed left-3 top-2 z-30 hidden h-10 w-10 animate-fade-in items-center justify-center rounded-xl bg-white/80 text-primary shadow-glass ring-1 ring-black/5 backdrop-blur-xl transition-colors hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent md:flex"
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5"><path d="M13 17l5-5-5-5M6 17l5-5-5-5" /></svg>
+        </button>
+      )}
+
+      <main
+        className={`flex h-dvh flex-col ${animate ? "md:transition-[padding] md:duration-sidebar md:ease-out" : ""} ${collapsed ? "md:pl-0 md:pt-14" : "md:pl-[280px]"} ${
+          sidebarShown ? "lg:pr-[22rem] xl:pr-[26rem]" : ""
+        }`}
+      >
+        <header className="flex items-center gap-3 border-b border-black/5 bg-white/80 px-4 py-2.5 backdrop-blur-xl md:hidden">
           <button
             type="button"
             onClick={() => setSidebarOpen(true)}
             aria-label="Open menu"
             aria-controls="sidebar"
             aria-expanded={sidebarOpen}
-            className="-ml-1 rounded-md p-1.5 hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
+            className="-ml-1 rounded-lg p-1.5 text-primary hover:bg-black/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           >
             <svg
               aria-hidden="true"
@@ -298,7 +391,7 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
               <path d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <div className="rounded-md bg-white px-2.5 py-1.5">
+          <div className="rounded-lg bg-white px-2.5 py-1.5 ring-1 ring-black/5">
             <Logo width={88} />
           </div>
           <span className="text-sm font-semibold text-accent">AI Search</span>

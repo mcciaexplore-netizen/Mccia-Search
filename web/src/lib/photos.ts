@@ -32,6 +32,9 @@ export function cleanPhotos(value: unknown): Photo[] {
   return photos;
 }
 
+/** The heading over photographs shown beside a real answer. */
+export const PHOTOS_RELATED_HEADING = "Related results from the archive";
+
 /** What the answer says when the photographs are all there is to show (see photosAreTheAnswer). */
 export const PHOTOS_FOUND_TEXT = "Photos found in Sampada archive:";
 

@@ -40,7 +40,7 @@ export default function PageImage({ filename, documentId, pageNumber }: PageImag
           <button
             type="button"
             onClick={retry}
-            className="mt-3 rounded-lg bg-accent px-5 py-2.5 text-sm font-semibold text-ink transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+            className="mt-3 rounded-lg bg-accent px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-accent-dark focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             Try again
           </button>

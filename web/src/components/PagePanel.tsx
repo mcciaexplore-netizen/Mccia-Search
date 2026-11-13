@@ -18,8 +18,8 @@ interface PagePanelProps {
 }
 
 const LAYOUT_CLASSES = {
-  sidebar: "fixed inset-y-0 right-0 z-20 flex w-[22rem] flex-col border-l border-black/10 bg-surface xl:w-[26rem]",
-  drawer: "fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col bg-surface shadow-xl",
+  sidebar: "fixed inset-y-0 right-0 z-20 flex w-[22rem] flex-col border-l border-white/70 bg-white/80 shadow-glass backdrop-blur-xl xl:w-[26rem]",
+  drawer: "fixed inset-y-0 right-0 z-50 flex w-full max-w-md animate-fade-in flex-col bg-white/90 shadow-glass backdrop-blur-xl",
 };
 
 /** The scanned pages an answer was taken from, with a list to switch between them. */
@@ -62,7 +62,7 @@ export default function PagePanel({ layout, sources, selectedKey, citedKeys = []
                 aria-label={cited ? `${source.filename}, page ${source.page_number}, cited in the answer` : undefined}
                 title={cited ? `${source.filename}, page ${source.page_number} (cited in the answer)` : `${source.filename}, page ${source.page_number}`}
                 className={`inline-flex max-w-full items-center gap-1.5 rounded-full px-3 py-1 text-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${
-                  active ? "bg-primary text-white" : "bg-gray-100 text-primary hover:bg-gray-200"
+                  active ? "bg-primary text-white" : "bg-slate-100 text-primary hover:bg-slate-200"
                 }`}
               >
                 {cited && <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-accent" />}
@@ -89,7 +89,7 @@ export default function PagePanel({ layout, sources, selectedKey, citedKeys = []
         </a>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto bg-gray-100 p-3">
+      <div className="min-h-0 flex-1 overflow-auto bg-slate-100/80 p-3">
         {/* A new key per page: switching sources starts the new image from "loading". */}
         <PageImage
           key={selectedKey}

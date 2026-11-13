@@ -17,6 +17,8 @@ const notoDevanagari = Noto_Sans_Devanagari({
 export const metadata: Metadata = {
   title: "MCCIA Search",
   description: "Internal knowledge search for MCCIA staff",
+  // There is no favicon file: an empty one stops the browser asking for /favicon.ico and logging a 404 on every visit.
+  icons: { icon: "data:," },
 };
 
 export default function RootLayout({

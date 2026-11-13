@@ -22,7 +22,7 @@ export default function SsoErrorPage({ searchParams }: { searchParams: { reason?
       <p className="mt-3 max-w-md text-lg text-muted">{message.text}</p>
       {settings.ok && (
         <div className="mt-8 flex flex-wrap justify-center gap-3">
-          <a href={settings.launchUrl} className="rounded-xl bg-accent px-5 py-2.5 font-semibold text-ink transition hover:brightness-110">Try again</a>
+          <a href={settings.launchUrl} className="rounded-xl bg-accent px-5 py-2.5 font-semibold text-white transition hover:bg-accent-dark">Try again</a>
           <a href={settings.hubUrl} className="rounded-xl border border-primary/30 px-5 py-2.5 font-semibold text-primary transition hover:bg-primary/5">Back to App Hub</a>
         </div>
       )}

@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { pageImageUrl } from "@/lib/api";
-import { photoAlt, photoImageUrl, photoSourceLabel } from "@/lib/photos";
+import { PHOTOS_RELATED_HEADING, photoAlt, photoImageUrl, photoSourceLabel } from "@/lib/photos";
 import type { Photo } from "@/lib/types";
 
 /**
@@ -35,9 +36,10 @@ export default function PhotoResults({
 
   if (shown.length === 0) return null;
   return (
-    <section aria-label="Photographs from the archive" className={showHeading ? "mt-4" : "mt-3"}>
-      {showHeading && <h3 className="text-sm font-medium text-muted">Photographs from the archive</h3>}
-      <ul className={`${showHeading ? "mt-2 " : ""}grid grid-cols-2 gap-3 sm:grid-cols-3`}>
+    <section aria-label="Photographs from the archive" className={showHeading ? "mt-5 border-t border-black/5 pt-4" : "mt-4"}>
+      {showHeading && <h3 className="text-sm font-semibold text-primary">{PHOTOS_RELATED_HEADING}</h3>}
+      {/* 1 column on a phone, 2 on a tablet, 3 on a desktop; every picture sits in the same 4:3 frame, whole (never cropped: these are old scans). */}
+      <ul className={`${showHeading ? "mt-3 " : ""}grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3`}>
         {shown.map((photo) => (
           <li key={photo.id} className="min-w-0">
             <button
@@ -47,20 +49,22 @@ export default function PhotoResults({
                 setOpen(photo);
               }}
               aria-label={`Enlarge: ${photoAlt(photo)}`}
-              className="block w-full overflow-hidden rounded-xl bg-black/5 ring-1 ring-black/10 transition hover:ring-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+              className="block w-full overflow-hidden rounded-xl bg-slate-100 ring-1 ring-black/[0.06] transition duration-[180ms] ease-out hover:scale-[1.02] hover:shadow-lift focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent motion-reduce:hover:scale-100"
             >
-              {/* A plain <img>: the picture comes from this app's own route, which is dynamic. */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={photoImageUrl(photo.id)}
-                alt={photoAlt(photo)}
-                loading="lazy"
-                onError={() => setBroken((previous) => new Set(previous).add(photo.id))}
-                className="h-40 w-full object-contain"
-              />
+              <span className="block aspect-[4/3] w-full">
+                {/* A plain <img>: the picture comes from this app's own route, which is dynamic. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={photoImageUrl(photo.id)}
+                  alt={photoAlt(photo)}
+                  loading="lazy"
+                  onError={() => setBroken((previous) => new Set(previous).add(photo.id))}
+                  className="h-full w-full object-contain"
+                />
+              </span>
             </button>
-            <p className="mt-1 line-clamp-2 break-words text-sm text-ink">{photo.caption || "No caption"}</p>
-            <p className="text-xs text-muted">{photoSourceLabel(photo)}</p>
+            <p className="mt-2 line-clamp-2 break-words text-sm leading-snug text-ink">{photo.caption || "No caption"}</p>
+            <p className="mt-0.5 text-xs text-muted">{photoSourceLabel(photo)}</p>
           </li>
         ))}
       </ul>
@@ -104,9 +108,10 @@ function Lightbox({ photo, onClose }: { photo: Photo; onClose: () => void }) {
     }
   };
 
-  return (
+  // In a portal on <body>, so no ancestor (a message that is animating, a panel with a filter) can clip or offset it.
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+      className="fixed inset-0 z-50 flex animate-fade-in items-center justify-center bg-primary/50 p-4 backdrop-blur-md"
       onClick={onClose}
       onKeyDown={onKeyDown}
       role="presentation"
@@ -117,35 +122,39 @@ function Lightbox({ photo, onClose }: { photo: Photo; onClose: () => void }) {
         aria-modal="true"
         aria-label={photoAlt(photo)}
         onClick={(event) => event.stopPropagation()}
-        className="flex max-h-full w-full max-w-4xl flex-col gap-3 rounded-2xl bg-surface p-4 shadow-xl"
+        className="flex max-h-full w-full max-w-5xl animate-scale-in flex-col gap-3 rounded-2xl bg-white/90 p-4 shadow-glass ring-1 ring-white/60 backdrop-blur-xl"
       >
         <div className="flex justify-end">
           <button
             ref={closeButton}
             type="button"
             onClick={onClose}
-            className="rounded-lg px-3 py-1.5 text-base font-medium text-primary ring-1 ring-primary/20 hover:bg-primary/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+            className="flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-medium text-primary ring-1 ring-primary/20 transition hover:bg-primary/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >
+            <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+              <path d="M5.28 4.22a.75.75 0 00-1.06 1.06L8.94 10l-4.72 4.72a.75.75 0 101.06 1.06L10 11.06l4.72 4.72a.75.75 0 101.06-1.06L11.06 10l4.72-4.72a.75.75 0 00-1.06-1.06L10 8.94 5.28 4.22z" />
+            </svg>
             Close
           </button>
         </div>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={photoImageUrl(photo.id)} alt={photoAlt(photo)} className="mx-auto max-h-[70vh] max-w-full min-h-0 object-contain" />
+        <img src={photoImageUrl(photo.id)} alt={photoAlt(photo)} className="mx-auto max-h-[70vh] min-h-0 max-w-full rounded-xl bg-slate-100 object-contain" />
         <div>
           {photo.caption && <p className="break-words text-base text-ink md:text-lg">{photo.caption}</p>}
-          <p className="text-sm text-muted">
+          <p className="mt-0.5 text-sm text-muted">
             {photoSourceLabel(photo)} ·{" "}
             <a
               href={pageImageUrl(photo.document_id, photo.page_number)}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-primary underline underline-offset-2 hover:text-accent"
+              className="text-accent underline underline-offset-2 hover:text-accent-dark"
             >
               Open the scanned page
             </a>
           </p>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

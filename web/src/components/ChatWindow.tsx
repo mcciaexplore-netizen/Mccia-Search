@@ -7,13 +7,19 @@ import { historyOf } from "@/lib/conversation";
 import { cleanPhotos } from "@/lib/photos";
 import { loadDraft, saveDraft, startRelaunch, wasRelaunched } from "@/lib/draft";
 import type { Message } from "@/lib/types";
-import Logo from "./Logo";
 import MessageBubble from "./MessageBubble";
 
-const EXAMPLE_QUESTIONS = [
-  "MCCIA च्या स्थापनेची माहिती द्या",
-  "What were the key industries in Pune in 1960?",
-  "MCCIA membership benefits",
+const WELCOME_HEADING = "How can I help you explore MCCIA?";
+const WELCOME_SUBTITLE = "Search through MCCIA\u2019s documents, history and archives.";
+
+type PromptIcon = "photo" | "person" | "book" | "building";
+
+// Picking one puts it in the question box (it is not sent), so it can be changed first.
+const SUGGESTED_PROMPTS: { text: string; icon: PromptIcon }[] = [
+  { text: "Find historical MCCIA photographs", icon: "photo" },
+  { text: "Search for information about past presidents", icon: "person" },
+  { text: "Explore MCCIA\u2019s historical publications", icon: "book" },
+  { text: "Find information about a specific company", icon: "building" },
 ];
 
 const MAX_INPUT_HEIGHT_PX = 160;
@@ -33,39 +39,49 @@ function describeError(err: unknown): string {
     : "Something went wrong. Please try again.";
 }
 
+const ICON_PATHS: Record<PromptIcon, string> = {
+  photo: "M3 7a2 2 0 012-2h2.5l1.2-1.6A1 1 0 019.5 3h5a1 1 0 01.8.4L16.5 5H19a2 2 0 012 2v11a2 2 0 01-2 2H5a2 2 0 01-2-2V7zm9 10a4 4 0 100-8 4 4 0 000 8z",
+  person: "M16 19v-1a4 4 0 00-4-4H8a4 4 0 00-4 4v1M10 11a3.5 3.5 0 100-7 3.5 3.5 0 000 7zM20 19v-1a4 4 0 00-3-3.87M15.5 4.2a3.5 3.5 0 010 6.6",
+  book: "M4 5.5A2.5 2.5 0 016.5 3H20v15H6.5A2.5 2.5 0 004 20.5v-15zM4 20.5A2.5 2.5 0 006.5 23H20v-5",
+  building: "M4 21V5a2 2 0 012-2h7a2 2 0 012 2v16M15 9h3a2 2 0 012 2v10M3 21h18M8 7.5h3M8 11.5h3M8 15.5h3",
+};
+
 function EmptyState({ onPick }: { onPick: (question: string) => void }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center px-6 py-10 text-center">
-      <Logo width={240} />
-      <h1 className="mt-6 text-3xl font-semibold text-primary">MCCIA Search</h1>
-      <p className="mt-2 max-w-md text-lg text-muted">
-        Ask questions about Sampada magazine and MCCIA documents
-      </p>
-      <div className="mt-8 flex max-w-3xl flex-wrap justify-center gap-3">
-        {EXAMPLE_QUESTIONS.map((question) => (
-          <button
-            key={question}
-            type="button"
-            onClick={() => onPick(question)}
-            className="rounded-full border border-primary/20 bg-surface px-5 py-2.5 text-base text-primary shadow-sm transition hover:border-accent hover:shadow focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-          >
-            {question}
-          </button>
+    <div className="mx-auto flex min-h-full w-full max-w-[760px] animate-fade-in flex-col items-center justify-center px-5 pb-40 pt-10 text-center">
+      <h1 className="text-balance text-3xl font-semibold tracking-tight text-primary md:text-4xl">{WELCOME_HEADING}</h1>
+      <p className="mt-3 max-w-md text-base leading-relaxed text-muted md:text-lg">{WELCOME_SUBTITLE}</p>
+      <ul className="mt-9 grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
+        {SUGGESTED_PROMPTS.map(({ text, icon }) => (
+          <li key={text}>
+            <button
+              type="button"
+              onClick={() => onPick(text)}
+              className="group flex w-full items-center gap-3 rounded-2xl bg-white/80 p-4 text-left ring-1 ring-black/[0.06] backdrop-blur transition duration-200 ease-out hover:-translate-y-0.5 hover:bg-white hover:shadow-float hover:ring-accent/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent motion-reduce:hover:translate-y-0"
+            >
+              <span aria-hidden="true" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent/10 text-accent">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
+                  <path d={ICON_PATHS[icon]} />
+                </svg>
+              </span>
+              <span className="text-[15px] font-medium leading-snug text-primary">{text}</span>
+            </button>
+          </li>
         ))}
-      </div>
+      </ul>
     </div>
   );
 }
 
 function TypingIndicator() {
   return (
-    <div className="flex" aria-hidden="true">
-      <div className="flex items-center gap-1.5 rounded-2xl bg-surface px-4 py-3.5 shadow-sm ring-1 ring-black/5">
+    <div className="flex animate-message-in" aria-hidden="true">
+      <div className="flex items-center gap-1.5 rounded-2xl rounded-bl-md bg-surface px-4 py-3.5 ring-1 ring-black/[0.06]">
         {[0, 1, 2].map((i) => (
           <span
             key={i}
-            className="h-2 w-2 animate-bounce rounded-full bg-primary/60 motion-reduce:animate-none"
-            style={{ animationDelay: `${i * 150}ms` }}
+            className="h-2 w-2 animate-pulse-dot rounded-full bg-accent motion-reduce:animate-none"
+            style={{ animationDelay: `${i * 160}ms` }}
           />
         ))}
       </div>
@@ -220,7 +236,7 @@ export default function ChatWindow({ initialMessages = [], onMessagesChange }: C
   };
 
   return (
-    <section className="flex h-full min-h-0 flex-col">
+    <section className="relative flex h-full min-h-0 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto">
         {messages.length === 0 ? (
           <EmptyState onPick={pickExample} />
@@ -228,21 +244,23 @@ export default function ChatWindow({ initialMessages = [], onMessagesChange }: C
           <div
             role="log"
             aria-label="Conversation"
-            className="mx-auto flex max-w-4xl flex-col gap-5 px-4 py-6 md:px-8"
+            className="mx-auto flex w-full max-w-[760px] flex-col gap-6 px-4 pb-44 pt-8 md:px-6"
           >
             {messages.map((message) => (
               <MessageBubble key={message.id} message={message} />
             ))}
             {loading && <TypingIndicator />}
-            <div ref={bottomRef} />
+            {/* The scroll margin keeps the newest message clear of the floating question bar. */}
+            <div ref={bottomRef} className="scroll-mb-44" />
           </div>
         )}
       </div>
 
-      <div className="px-4 pb-4 pt-2 md:px-8">
+      {/* The question bar floats over the bottom of the conversation, which scrolls beneath it. */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-page via-page/90 to-transparent px-4 pb-4 pt-10 md:px-6">
         <form
           onSubmit={handleSubmit}
-          className="mx-auto flex max-w-3xl items-end gap-2 rounded-2xl bg-surface p-2 shadow-lg shadow-primary/10 ring-1 ring-black/5 focus-within:ring-primary/30"
+          className="pointer-events-auto mx-auto flex w-full max-w-[760px] items-end gap-2 rounded-[28px] bg-white/80 p-2 pl-5 shadow-float ring-1 ring-black/[0.06] backdrop-blur-xl transition-[box-shadow,background-color,transform] duration-200 ease-out focus-within:-translate-y-0.5 focus-within:bg-white focus-within:shadow-float-focus focus-within:ring-2 focus-within:ring-accent/40 motion-reduce:focus-within:translate-y-0"
         >
           <textarea
             ref={inputRef}
@@ -253,13 +271,13 @@ export default function ChatWindow({ initialMessages = [], onMessagesChange }: C
             rows={1}
             placeholder="Ask anything about MCCIA documents..."
             aria-label="Your question"
-            className="min-h-[2.5rem] flex-1 resize-none bg-transparent px-3 py-2 text-base leading-relaxed md:text-lg text-ink placeholder:text-muted focus:outline-none disabled:opacity-60"
+            className="min-h-[2.5rem] flex-1 resize-none bg-transparent py-2 text-base leading-relaxed text-ink placeholder:text-muted focus:outline-none disabled:opacity-60"
           />
           <button
             type="submit"
             disabled={loading || !input.trim()}
             aria-label="Send question"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent text-ink transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent text-white transition duration-200 hover:bg-accent-dark focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-accent"
           >
             <svg
               aria-hidden="true"
@@ -271,13 +289,13 @@ export default function ChatWindow({ initialMessages = [], onMessagesChange }: C
               strokeLinejoin="round"
               className="h-5 w-5"
             >
-              <path d="M5 12h14M13 6l6 6-6 6" />
+              <path d="M12 19V5M5 12l7-7 7 7" />
             </svg>
           </button>
         </form>
         <p
           role="status"
-          className="mx-auto mt-1.5 h-4 max-w-3xl text-center text-xs text-muted"
+          className="pointer-events-auto mx-auto mt-1.5 h-4 max-w-[760px] text-center text-xs text-muted"
         >
           {loading ? "Searching documents..." : notice}
         </p>

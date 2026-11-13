@@ -27,7 +27,7 @@ const FILTERS: { value: Filter; label: string }[] = [
 
 const STATUS_BADGE: Record<string, { label: string; className: string }> = {
   completed: { label: "Ready", className: "bg-emerald-100 text-emerald-800" },
-  failed: { label: "Failed", className: "bg-accent/15 text-ink" },
+  failed: { label: "Failed", className: "bg-warn/15 text-ink" },
   processing: { label: "In progress", className: "bg-sky-100 text-sky-800" },
   pending: { label: "In progress", className: "bg-sky-100 text-sky-800" },
   // The text is saved but not yet embedded, so search cannot find it.
@@ -54,7 +54,7 @@ function SummaryCard({ label, value, tone = "normal" }: { label: string; value: 
   return (
     <div className="rounded-xl bg-surface px-4 py-3 shadow-sm ring-1 ring-black/5">
       <p className="text-sm text-muted">{label}</p>
-      <p className={`mt-0.5 text-2xl font-semibold ${tone === "warn" ? "text-accent" : "text-primary"}`}>{value}</p>
+      <p className={`mt-0.5 text-2xl font-semibold ${tone === "warn" ? "text-warn" : "text-primary"}`}>{value}</p>
     </div>
   );
 }
@@ -130,14 +130,14 @@ export default function KnowledgeBase() {
           type="button"
           onClick={handleSync}
           disabled={syncState !== "idle"}
-          className="rounded-lg bg-accent px-5 py-2.5 text-sm font-semibold text-ink transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-60"
+          className="rounded-lg bg-accent px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-accent-dark focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-60"
         >
           {SYNC_LABELS[syncState]}
         </button>
       </div>
 
       {error && !data && (
-        <div role="alert" className="mt-6 rounded-xl border border-accent/40 bg-accent/10 px-4 py-4 text-base text-ink">
+        <div role="alert" className="mt-6 rounded-xl border border-warn/40 bg-warn/10 px-4 py-4 text-base text-ink">
           Could not load the knowledge base.{" "}
           <button type="button" onClick={() => void load()} className="font-semibold text-primary underline underline-offset-2">
             Try again
