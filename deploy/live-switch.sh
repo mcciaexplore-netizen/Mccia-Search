@@ -7,11 +7,11 @@
 #   deploy/live-switch.sh rollback   put the previous container back
 #   deploy/live-switch.sh status     what is live, and its memory
 #
-# Needs SUPABASE_SERVICE_ROLE_KEY in ~/mccia-search/.env (the backend reads private photographs with it); `prepare` says so if it is missing.
+# Do `git pull` yourself before `prepare` (the script must not change underneath itself while it runs). Needs SUPABASE_SERVICE_ROLE_KEY in ~/mccia-search/.env (the backend reads private photographs with it); `prepare` says so if it is missing.
 # The model files are the ones the pipeline already put in ~/hf-models (CLIP is about 0.6 GB of them).
 set -u
 NAME=Mccia-Sampada-Backend
-WAITING=$NAME-nophotos          # where the previous container waits while the new one runs
+WAITING=${WAITING:-$NAME-previous}   # where the container that was live waits (stopped) while the new one runs; one slot, so remove or rename an old one first
 IMAGE=mccia-backend:live
 MODELS=$HOME/hf-models
 MEMORY=2g                       # the new container needs about 1 GB; it can never use more than this
@@ -67,6 +67,8 @@ for q in ('photo of a portrait of a man', 'photos of a group of people at a cere
     t = time.time(); hits = search_photos(q, 3, clip_text=clip)
     print(f'{q!r}: {len(hits)} hits in {time.time()-t:.1f}s', [(h.document_id, h.page_number, round(h.score, 2), h.caption[:30]) for h in hits])
 if store and hits: print('signed link works:', bool(store.signed_urls([hits[0].storage_path])))
+top = search_photos('show photo of Parkhe', 5, clip_text=clip)
+print('name check (Parkhe, which Gemini spells differently from the caption): top hit caption holds the name:', bool(top and 'पारखे' in top[0].caption), '| caption score', round(top[0].signals['caption'], 2) if top else None, '|', [(h.page_number, round(h.score, 2)) for h in top[:3]])
 print('peak memory: %.0f MB' % (resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024))
 " </dev/null 2>&1 | grep -v "Warning\|warn"
   echo "(read the lines above; if they look right, run: deploy/live-switch.sh switch)"
