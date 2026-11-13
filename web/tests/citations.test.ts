@@ -1,57 +1,48 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { rehypeCitations, splitCitations } from "../src/lib/citations";
+import { stripCitations } from "../src/lib/citations";
 
-const cited = (text: string) => splitCitations(text).filter((p) => p.citation).map((p) => p.text);
-const joined = (text: string) => splitCitations(text).map((p) => p.text).join("");
-
-test("a parenthesised source is one citation, page number included", () => {
-  assert.deepEqual(cited("MCCIA began in 1934 (Source: 2012-Jan To 2012-Dec.PDF, Page 296). More follows."), [
-    "(Source: 2012-Jan To 2012-Dec.PDF, Page 296)",
-  ]);
-  assert.deepEqual(cited("[Source: 1949 April.PDF, pages 87, 89]"), ["[Source: 1949 April.PDF, pages 87, 89]"]);
+test("a parenthesised or bracketed source is taken out, with the space before it", () => {
+  assert.equal(stripCitations("MCCIA began in 1934 (Source: 2012-Jan To 2012-Dec.PDF, Page 296). More follows."), "MCCIA began in 1934. More follows.");
+  assert.equal(stripCitations("It grew [Source: 1949 April.PDF, pages 87, 89] over the years."), "It grew over the years.");
 });
 
-test("page mentions, numbered markers and Marathi page words are citations", () => {
-  assert.deepEqual(cited("See pages 87, 89 and 90 of the 1949 issue."), ["pages 87, 89 and 90"]);
-  assert.deepEqual(cited("It is on p. 5 and also page no. 7."), ["p. 5", "page no. 7"]);
-  assert.deepEqual(cited("Founded in 1934 [1] and again [2, 3]."), ["[1]", "[2, 3]"]);
-  assert.deepEqual(cited("१९४९ एप्रिल, पान २९६ वर"), ["पान २९६"]);
+test("the '[2, page 234]' style and a bare issue-and-pages bracket are taken out", () => {
+  assert.equal(stripCitations("It was founded in 1934 [2, page 234]."), "It was founded in 1934.");
+  assert.equal(stripCitations("The council met yearly (1949 April, pages 87, 89)."), "The council met yearly.");
+  assert.equal(stripCitations("Founded in 1934 [1] and again [2, 3]."), "Founded in 1934 and again.");
 });
 
-test("ordinary text is left alone", () => {
-  for (const text of ["The page was torn.", "Pages of history", "In 1934, 87 members joined.", "A [link] in brackets", "No citation here."]) {
-    assert.deepEqual(cited(text), [], text);
-  }
+test("Marathi page words work too", () => {
+  assert.equal(stripCitations("स्थापना १९३४ मध्ये झाली (२०१२-जानेवारी, पान २९६)."), "स्थापना १९३४ मध्ये झाली.");
 });
 
-test("the text is never changed: the parts join back to what went in", () => {
-  for (const text of ["", "plain", "a (Source: x.PDF, Page 3) b [1] c page 4.", "पान २९६ आणि page 5", "(Source: unterminated"]) {
-    assert.equal(joined(text), text);
-  }
-});
-
-test("the plugin wraps citations in a span and leaves code and links alone", () => {
-  const tree = {
-    type: "root",
-    children: [
-      {
-        type: "element",
-        tagName: "p",
-        children: [
-          { type: "text", value: "Founded in 1934 (Source: a.PDF, Page 3) here." },
-          { type: "element", tagName: "code", children: [{ type: "text", value: "page 9" }] },
-          { type: "element", tagName: "a", children: [{ type: "text", value: "page 10" }] },
-        ],
-      },
-    ],
-  };
-  rehypeCitations()(tree);
-  const [paragraph] = tree.children as any[];
-  assert.deepEqual(
-    paragraph.children.map((c: any) => (c.tagName === "span" ? `<${c.properties.className[0]}>${c.children[0].value}` : c.type === "text" ? c.value : c.tagName)),
-    ["Founded in 1934 ", "<citation>(Source: a.PDF, Page 3)", " here.", "code", "a"]
+test("a list keeps its lines: each citation goes from the end of its own line", () => {
+  assert.equal(
+    stripCitations("- The founding committee (Source: 1949 April.PDF, Page 87)\n- The office bearers [1]\n- Annual meetings [3, page 12]"),
+    "- The founding committee\n- The office bearers\n- Annual meetings"
   );
-  assert.equal(paragraph.children[3].children[0].value, "page 9");
-  assert.equal(paragraph.children[4].children[0].value, "page 10");
+});
+
+test("a page number in running text and ordinary brackets are part of the sentence and stay", () => {
+  for (const text of [
+    "See pages 89 and 90 for the full list.",
+    "It is on p. 5 of the issue.",
+    "In 1934, 87 members joined (a record for the time).",
+    "A [link] in brackets and (an aside) too.",
+    "No citation here.",
+    "",
+  ]) {
+    assert.equal(stripCitations(text), text);
+  }
+});
+
+test("an answer that is nothing but a citation is left as it was", () => {
+  assert.equal(stripCitations("(Source: a.PDF, Page 3)"), "(Source: a.PDF, Page 3)");
+});
+
+test("the same text twice gives the same result (no state is carried between calls)", () => {
+  const text = "One (Source: a.PDF, Page 3) two [1].";
+  assert.equal(stripCitations(text), "One two.");
+  assert.equal(stripCitations(text), "One two.");
 });

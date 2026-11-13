@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { rehypeCitations } from "@/lib/citations";
+import { stripCitations } from "@/lib/citations";
 import { PHOTOS_FOUND_TEXT, photosAreTheAnswer } from "@/lib/photos";
 import type { Message } from "@/lib/types";
 import PhotoResults from "./PhotoResults";
+import Sources from "./Sources";
 
 function formatTime(date: Date): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -15,6 +16,8 @@ export default function MessageBubble({ message }: { message: Message }) {
   // If none of the photographs can be loaded they are no answer after all: the usual "not found" shows instead.
   const [photosFailed, setPhotosFailed] = useState(false);
   const onPhotosFailed = useCallback(() => setPhotosFailed(true), []);
+  // The answer is drawn without its bracketed citations; the message itself is kept as the server wrote it.
+  const text = useMemo(() => stripCitations(message.content), [message.content]);
   const time = <span className="mt-1.5 px-1 text-xs text-muted">{formatTime(message.timestamp)}</span>;
 
   if (message.role === "user") {
@@ -40,9 +43,7 @@ export default function MessageBubble({ message }: { message: Message }) {
         ) : (
           <div className="prose max-w-none break-words">
             {/* Images are not rendered: a remote image URL in a model answer could leak data. */}
-            <ReactMarkdown disallowedElements={["img"]} rehypePlugins={[rehypeCitations]}>
-              {message.content}
-            </ReactMarkdown>
+            <ReactMarkdown disallowedElements={["img"]}>{text}</ReactMarkdown>
           </div>
         )}
         {message.found === false && !message.clarify && !photosAnswer && (
@@ -52,6 +53,7 @@ export default function MessageBubble({ message }: { message: Message }) {
           </p>
         )}
         {photos && <PhotoResults photos={photos} showHeading={!photosAnswer} onAllBroken={onPhotosFailed} />}
+        {message.found === true && <Sources sources={message.sources} />}
       </div>
       {time}
     </div>
