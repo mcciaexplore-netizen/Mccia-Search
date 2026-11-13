@@ -37,7 +37,7 @@ def test_a_question_without_history_still_works_as_before(client):
     client.calls["searched_as"] = "Who was MCCIA president in 1965?"
     response = client.post("/chat", json={"query": "Who was MCCIA president in 1965?"}, headers=HEADERS)
     assert response.status_code == 200
-    assert response.json() == {"answer": "Shri A (1965 issue).", "sources": [], "found": True, "clarify": False}
+    assert response.json() == {"answer": "Shri A (1965 issue).", "sources": [], "found": True, "clarify": False, "photos": []}
     assert client.calls["rag"] == [{"query": "Who was MCCIA president in 1965?", "top_k": None, "history": []}]
     assert client.calls["audit"][0]["detail"] is None  # searched as asked: nothing extra to record
 
@@ -70,7 +70,7 @@ def test_a_question_back_is_marked_so_the_page_does_not_call_it_no_results(clien
     client.calls["clarify"] = True
     response = client.post("/chat", json={"query": "Tell me about her", "history": [{"question": "q", "answer": "a"}]}, headers=HEADERS)
     assert response.status_code == 200
-    assert response.json() == {"answer": "Could you clarify who/what you are referring to?", "sources": [], "found": False, "clarify": True}
+    assert response.json() == {"answer": "Could you clarify who/what you are referring to?", "sources": [], "found": False, "clarify": True, "photos": []}
 
 
 def test_a_question_back_is_recorded_in_the_audit_log_as_asked_to_clarify(client):

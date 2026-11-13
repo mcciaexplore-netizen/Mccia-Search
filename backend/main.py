@@ -1,12 +1,13 @@
 """FastAPI application entry point for the MCCIA RAG chatbot."""
 
+import concurrent.futures
 import threading
 import time
 from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 import audit
 import auth
@@ -14,6 +15,9 @@ import embedding_engine
 import keepwarm
 import pages
 import sso
+from photos import runtime as photo_runtime
+from photos.query import photo_subject, wants_photos
+from photos.search import PhotoHit, search_photos
 from config import validate_config
 from db.connection import close_pool, get_connection, get_pool, get_pooled_connection, init_db
 from generation.answer import rag
@@ -24,6 +28,9 @@ from models.schemas import (
     ChatRequest,
     ChatResponse,
     DocumentsResponse,
+    PhotoItem,
+    PhotoSearchRequest,
+    PhotoSearchResponse,
     HealthResponse,
     IngestStatusResponse,
     IngestTriggerResponse,
@@ -72,6 +79,7 @@ async def lifespan(app: FastAPI):
     print("[startup] database pool ready")
     print("[startup] mccia-search ready")
     threading.Thread(target=_prepare_embeddings, name="prepare-embeddings", daemon=True).start()
+    threading.Thread(target=photo_runtime.warm_up, name="prepare-photo-search", daemon=True).start()
     keepwarm.start()  # a cheap GET to the web app every few minutes, so its sign-in function is not cold
     yield
     keepwarm.stop()
@@ -109,6 +117,41 @@ def _audit_detail(query: str, result: dict) -> str | None:
     return f"searched as: {searched}{resolved}"
 
 
+PHOTO_SEARCH_TIMEOUT_SECONDS = 12.0  # a chat answer waits at most this long for its photographs
+_photo_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="photos")
+
+
+def _photo_item(hit: PhotoHit, signed_url: str | None = None) -> PhotoItem:
+    return PhotoItem(
+        id=hit.id, document_id=hit.document_id, page_number=hit.page_number, filename=hit.filename, year=hit.year, caption=hit.caption, kind=hit.kind,
+        contains_face=hit.contains_face, score=round(hit.score, 3), signed_url=signed_url,
+    )
+
+
+def find_photos(query: str, top_k: int = 5, signed: bool = False) -> list[PhotoItem]:
+    """The photographs matching a request, as API items. Raises if photo search is not set up on this server (no storage key)."""
+    store = photo_runtime.get_store()
+    if store is None:
+        raise RuntimeError("no Supabase service-role key on this server")
+    hits = search_photos(query, top_k, clip_text=photo_runtime.get_clip())
+    links: dict[str, str] = {}
+    if signed and hits:
+        try:
+            links = store.signed_urls([h.storage_path for h in hits])
+        except Exception as exc:  # a picture can still be shown through /photos/{id}/image
+            print(f"[photos] could not sign links: {type(exc).__name__}: {str(exc)[:100]}")
+    return [_photo_item(h, links.get(h.storage_path)) for h in hits]
+
+
+def photos_for_chat(query: str) -> list[PhotoItem]:
+    """Photographs for a chat answer, or none. Photo search is an extra: whatever goes wrong (no key, a slow model, a database hiccup), the answer is still sent."""
+    try:
+        return _photo_pool.submit(find_photos, query).result(timeout=PHOTO_SEARCH_TIMEOUT_SECONDS)
+    except Exception as exc:
+        print(f"[chat] photos skipped: {type(exc).__name__}: {str(exc)[:120]}")
+        return []
+
+
 @app.post("/chat", response_model=ChatResponse, dependencies=[Depends(auth.require_api_key)])
 def chat(
     req: ChatRequest,
@@ -127,11 +170,15 @@ def chat(
         raise HTTPException(status_code=400, detail="query must not be blank")
     try:
         result = rag(req.query, req.top_k, [turn.model_dump() for turn in req.history])
+        asked_for_photos = wants_photos(req.query) and not result.get("clarify", False)
+        # A follow-up ("show his photo") is searched as it was made specific, like the text search; the request words are taken off again.
+        photos = photos_for_chat(result.get("search_query") or req.query) if asked_for_photos else []
         response = ChatResponse(
             answer=result["answer"],
             sources=[SourceItem(**s) for s in result["sources"]],
             found=result["found"],
             clarify=result.get("clarify", False),
+            photos=photos,
         )
     except Exception as exc:
         print(f"[chat] error: {exc}")
@@ -150,11 +197,48 @@ def chat(
         status=200,
         duration_ms=elapsed_ms(),
         client=client,
-        detail=_audit_detail(req.query, result),
+        detail=(" | ".join(x for x in (_audit_detail(req.query, result), f"photos: {len(response.photos)}" if asked_for_photos else None) if x) or None),
         user_id=user.id,
         user_email=user.email,
     )
     return response
+
+
+@app.post("/search/photos", response_model=PhotoSearchResponse, dependencies=[Depends(auth.require_api_key)])
+def search_photos_endpoint(req: PhotoSearchRequest, request: Request, background_tasks: BackgroundTasks, user: auth.User = Depends(auth.require_user)):
+    """The photographs that best match a request such as "photo of Kirloskar": by the printed caption (names), the article on the page, and what they look like."""
+    started = time.perf_counter()
+    if not req.query.strip():
+        raise HTTPException(status_code=400, detail="query must not be blank")
+    try:
+        photos = find_photos(req.query, req.top_k, signed=True)
+    except Exception as exc:
+        print(f"[search/photos] error: {type(exc).__name__}: {str(exc)[:160]}")
+        status = 503 if isinstance(exc, RuntimeError) else 500
+        background_tasks.add_task(audit.record, "chat", query=req.query, status=status, duration_ms=int((time.perf_counter() - started) * 1000),
+                                  client=audit.client_of(request), detail=f"photo search: {type(exc).__name__}", user_id=user.id, user_email=user.email)
+        raise HTTPException(status_code=status, detail="Photo search is not available right now." if status == 503 else "An error occurred while searching photographs.")
+    background_tasks.add_task(audit.record, "chat", query=req.query, found=bool(photos), sources=len(photos), status=200, detail="photo search",
+                              duration_ms=int((time.perf_counter() - started) * 1000), client=audit.client_of(request), user_id=user.id, user_email=user.email)
+    return PhotoSearchResponse(searched_for=photo_subject(req.query) or req.query.strip(), photos=photos)
+
+
+@app.get("/photos/{photo_id}/image", dependencies=[Depends(auth.require_api_key)])
+def photo_image(photo_id: int):
+    """One photograph's picture (a JPEG), read from private storage. The web app shows photographs through this, so no link ever expires."""
+    store = photo_runtime.get_store()
+    if store is None:
+        raise HTTPException(status_code=503, detail="Photographs are not available on this server.")
+    with get_pooled_connection() as conn:
+        row = conn.execute("SELECT storage_path FROM photo_index WHERE id = %s", (photo_id,)).fetchone()
+    if row is None or not row[0]:
+        raise HTTPException(status_code=404, detail="That photograph was not found.")
+    try:
+        data = store.get(row[0])
+    except Exception as exc:
+        print(f"[photos] could not read {row[0]}: {type(exc).__name__}: {str(exc)[:120]}")
+        raise HTTPException(status_code=502, detail="The photograph could not be fetched. Please try again.")
+    return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
 
 
 @app.post("/sso/login", response_model=SsoLoginResponse, dependencies=[Depends(auth.require_admin_key)])

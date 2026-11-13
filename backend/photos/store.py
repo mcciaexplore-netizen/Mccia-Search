@@ -81,6 +81,11 @@ class SupabaseStore:
         response = self._client.post(url, content=data, headers={**self._headers(content_type), "x-upsert": "true"})
         self._check(response, f"uploading {path}")
 
+    def get(self, path: str) -> bytes:
+        """The bytes of a private object, read with the service key (so the app can serve a picture without handing out a link)."""
+        response = self._client.get(f"{self.base}/object/authenticated/{self.bucket}/{quote(path)}", headers=self._headers())
+        return self._check(response, f"reading {path}").content
+
     def signed_urls(self, paths: list[str], seconds: int = SIGNED_URL_SECONDS) -> dict[str, str]:
         """Time-limited links to private objects: {path: URL}. A path that does not exist is left out."""
         if not paths:
@@ -103,7 +108,7 @@ def from_env() -> SupabaseStore | None:
     """The store, from the environment or from .env.supabase.local; None if the service-role key is not there.
 
     The key is SUPABASE_SERVICE_ROLE_KEY (SUPABASE_SERVICE_KEY also works). The address is SUPABASE_URL, or else worked out from SUPABASE_DATABASE_URL,
-    which is already in that file.
+    which is already in that file (or DATABASE_URL, as on the server).
     """
     from dotenv import dotenv_values
 
@@ -117,5 +122,5 @@ def from_env() -> SupabaseStore | None:
         return None
 
     key = setting("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SERVICE_KEY")
-    url = setting("SUPABASE_URL") or project_url_from(setting("SUPABASE_DATABASE_URL"))
+    url = setting("SUPABASE_URL") or project_url_from(setting("SUPABASE_DATABASE_URL")) or project_url_from(setting("DATABASE_URL"))
     return SupabaseStore(url, key) if url and key else None

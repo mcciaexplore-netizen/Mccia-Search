@@ -26,10 +26,37 @@ class SourceItem(BaseModel):
     similarity: float
 
 
+class PhotoItem(BaseModel):
+    """One photograph from a scanned page. Its picture is at GET /photos/{id}/image (what the web app uses); signed_url is a link that works for an hour."""
+
+    id: int
+    document_id: int
+    page_number: int
+    filename: str
+    year: str | None = None  # the issue's years as they read in an answer, such as "1964-65"
+    caption: str = ""  # the caption printed beside it ("" if none was found)
+    kind: str  # photo | advertisement | illustration
+    contains_face: bool = False
+    score: float
+    signed_url: str | None = None
+
+
+class PhotoSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=300)
+    top_k: int = Field(default=5, ge=1, le=12)
+
+
+class PhotoSearchResponse(BaseModel):
+    searched_for: str  # what the photographs were searched for, without the request words
+    photos: list[PhotoItem]
+
+
 class ChatResponse(BaseModel):
     answer: str
     sources: list[SourceItem]
     found: bool
+    # Photographs matching the question, when it asked for photographs, pictures or images (empty otherwise, or if none match well).
+    photos: list[PhotoItem] = Field(default_factory=list)
     # True when the answer is a question back (who or what is meant?) rather than a result: the page does not call it "No results found".
     clarify: bool = False
 
