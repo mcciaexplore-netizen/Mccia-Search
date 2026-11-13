@@ -29,7 +29,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${inter.variable} ${notoDevanagari.variable} bg-page font-sans text-ink antialiased`}
+        className={`${inter.variable} ${notoDevanagari.variable} bg-page font-sans leading-[1.6] text-ink antialiased`}
       >
         {children}
       </body>

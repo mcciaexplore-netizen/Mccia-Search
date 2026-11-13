@@ -18,8 +18,8 @@ interface PagePanelProps {
 }
 
 const LAYOUT_CLASSES = {
-  sidebar: "fixed inset-y-0 right-0 z-20 flex w-[22rem] flex-col border-l border-white/70 bg-white/80 shadow-glass backdrop-blur-xl xl:w-[26rem]",
-  drawer: "fixed inset-y-0 right-0 z-50 flex w-full max-w-md animate-fade-in flex-col bg-white/90 shadow-glass backdrop-blur-xl",
+  sidebar: "fixed inset-y-0 right-0 z-20 flex w-[22rem] flex-col border-l border-line bg-white xl:w-[26rem]",
+  drawer: "fixed inset-y-0 right-0 z-50 flex w-full max-w-md animate-fade-in flex-col bg-white shadow-2xl",
 };
 
 /** The scanned pages an answer was taken from, with a list to switch between them. */
@@ -33,14 +33,14 @@ export default function PagePanel({ layout, sources, selectedKey, citedKeys = []
       aria-modal={layout === "drawer" ? true : undefined}
       className={LAYOUT_CLASSES[layout]}
     >
-      <div className="flex items-center gap-2 border-b border-black/5 px-4 py-3">
-        <h2 className="min-w-0 flex-1 text-base font-semibold text-primary">Scanned pages</h2>
+      <div className="flex items-center gap-2 border-b border-line px-4 py-3">
+        <h2 className="min-w-0 flex-1 text-base font-semibold text-ink">Scanned pages</h2>
         <button
           type="button"
           onClick={onClose}
           autoFocus={layout === "drawer"}
           aria-label="Close page panel"
-          className="shrink-0 rounded-lg p-1.5 text-primary transition hover:bg-primary/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          className="shrink-0 rounded-lg p-1.5 text-ink transition hover:bg-tint focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
           <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
             <path d="M5.28 4.22a.75.75 0 00-1.06 1.06L8.94 10l-4.72 4.72a.75.75 0 101.06 1.06L10 11.06l4.72 4.72a.75.75 0 101.06-1.06L11.06 10l4.72-4.72a.75.75 0 00-1.06-1.06L10 8.94 5.28 4.22z" />
@@ -48,7 +48,7 @@ export default function PagePanel({ layout, sources, selectedKey, citedKeys = []
         </button>
       </div>
 
-      <ul aria-label="Pages cited in the answer" className="flex max-h-40 shrink-0 flex-wrap gap-1.5 overflow-y-auto border-b border-black/5 px-4 py-3">
+      <ul aria-label="Pages cited in the answer" className="flex max-h-40 shrink-0 flex-wrap gap-1.5 overflow-y-auto border-b border-line px-4 py-3">
         {sources.map((source) => {
           const key = sourceKey(source);
           const active = key === selectedKey;
@@ -62,7 +62,7 @@ export default function PagePanel({ layout, sources, selectedKey, citedKeys = []
                 aria-label={cited ? `${source.filename}, page ${source.page_number}, cited in the answer` : undefined}
                 title={cited ? `${source.filename}, page ${source.page_number} (cited in the answer)` : `${source.filename}, page ${source.page_number}`}
                 className={`inline-flex max-w-full items-center gap-1.5 rounded-full px-3 py-1 text-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${
-                  active ? "bg-primary text-white" : "bg-slate-100 text-primary hover:bg-slate-200"
+                  active ? "bg-accent text-white" : "bg-sidebar text-ink hover:bg-tint"
                 }`}
               >
                 {cited && <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-accent" />}
@@ -75,7 +75,7 @@ export default function PagePanel({ layout, sources, selectedKey, citedKeys = []
       </ul>
 
       <div className="flex items-center gap-2 px-4 py-2.5">
-        <p className="flex min-w-0 flex-1 items-baseline gap-1.5 text-sm text-primary" title={`${selected.filename}, page ${selected.page_number}`}>
+        <p className="flex min-w-0 flex-1 items-baseline gap-1.5 text-sm text-ink" title={`${selected.filename}, page ${selected.page_number}`}>
           <span className="shrink-0 font-semibold">Page {selected.page_number}</span>
           <span className="min-w-0 truncate text-muted">{selected.filename}</span>
         </p>
@@ -83,13 +83,13 @@ export default function PagePanel({ layout, sources, selectedKey, citedKeys = []
           href={pageImageUrl(selected.document_id, selected.page_number)}
           target="_blank"
           rel="noopener noreferrer"
-          className="shrink-0 rounded-lg px-3 py-1.5 text-sm font-medium text-primary ring-1 ring-primary/30 transition hover:bg-primary/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          className="shrink-0 rounded-lg px-3 py-1.5 text-sm font-medium text-ink ring-1 ring-line transition hover:bg-tint focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         >
           Open in new tab
         </a>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto bg-slate-100/80 p-3">
+      <div className="min-h-0 flex-1 overflow-auto bg-sidebar p-3">
         {/* A new key per page: switching sources starts the new image from "loading". */}
         <PageImage
           key={selectedKey}

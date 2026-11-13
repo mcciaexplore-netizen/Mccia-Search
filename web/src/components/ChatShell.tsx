@@ -183,12 +183,9 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
 
   return (
     <div className="relative isolate min-h-dvh bg-page">
-      {/* The soft shapes the glass panels blur. */}
-      <div aria-hidden="true" className="app-backdrop pointer-events-none fixed inset-0 -z-10" />
-
       {sidebarOpen && (
         <div
-          className="fixed inset-0 z-30 animate-fade-in bg-primary/40 backdrop-blur-[2px] md:hidden"
+          className="fixed inset-0 z-30 animate-fade-in bg-black/40 md:hidden"
           aria-hidden="true"
           onClick={() => setSidebarOpen(false)}
         />
@@ -196,7 +193,7 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
 
       <aside
         id="sidebar"
-        className={`fixed inset-y-0 left-0 z-40 flex w-[280px] max-w-[85vw] flex-col border-r border-white/70 bg-white/85 shadow-glass backdrop-blur-xl will-change-transform md:bg-white/70 ${
+        className={`fixed inset-y-0 left-0 z-40 flex w-[280px] max-w-[85vw] flex-col border-r border-line bg-sidebar will-change-transform ${
           animate ? "transition-[transform,visibility] duration-sidebar ease-out" : ""
         } ${sidebarOpen ? "translate-x-0" : "invisible -translate-x-full"} ${
           collapsed ? "md:invisible md:-translate-x-full" : "md:visible md:translate-x-0"
@@ -220,7 +217,7 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
               aria-label="Collapse sidebar"
               aria-controls="sidebar"
               aria-expanded={!collapsed}
-              className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-black/5 hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent md:flex"
+              className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-tint hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent md:flex"
             >
               <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5"><path d="M11 17l-5-5 5-5M18 17l-5-5 5-5" /></svg>
             </button>
@@ -228,7 +225,7 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
               type="button"
               onClick={() => setSidebarOpen(false)}
               aria-label="Close menu"
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-black/5 hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent md:hidden"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-tint hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent md:hidden"
             >
               <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-5 w-5"><path d="M6 6l12 12M18 6L6 18" /></svg>
             </button>
@@ -254,12 +251,12 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
           />
         </div>
 
-        <div className="space-y-1 border-t border-black/5 p-3">
+        <div className="space-y-1 border-t border-line p-3">
           {chats.length > 0 && (
             <button
               type="button"
               onClick={clearHistory}
-              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium text-muted transition-colors hover:bg-black/[0.04] hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium text-muted transition-colors hover:bg-tint hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             >
               <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
                 <path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M9 7V4h6v3" />
@@ -273,7 +270,7 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
               onClick={openSettings}
               aria-current={view === "settings" ? "page" : undefined}
               className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${
-                view === "settings" ? "bg-accent/10 text-primary" : "text-muted hover:bg-black/[0.04] hover:text-primary"
+                view === "settings" ? "bg-tint text-ink" : "text-muted hover:bg-tint hover:text-ink"
               }`}
             >
               <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
@@ -284,13 +281,13 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
             </button>
           )}
           {user && (
-            <div className="mt-1 rounded-xl bg-white/70 p-2.5 ring-1 ring-black/5">
+            <div className="mt-1 rounded-xl border border-line bg-white p-2.5">
               <div className="flex items-center gap-3">
-                <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-white">
+                <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent text-sm font-semibold text-white">
                   {initials}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-primary" title={user.name}>{user.name}</p>
+                  <p className="truncate text-sm font-semibold text-ink" title={user.name}>{user.name}</p>
                   <p className="truncate text-xs text-muted" title={user.email}>{user.email}</p>
                 </div>
               </div>
@@ -301,7 +298,7 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
                   </a>
                 )}
                 <form method="post" action="/api/logout" className="ml-auto">
-                  <button type="submit" className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-muted transition-colors hover:bg-black/5 hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+                  <button type="submit" className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-muted transition-colors hover:bg-tint hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
                     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9" /></svg>
                     Log out
                   </button>
@@ -325,7 +322,7 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
 
       {drawerShown && panel && (
         <>
-          <div className="fixed inset-0 z-40 animate-fade-in bg-primary/40 backdrop-blur-[2px]" aria-hidden="true" onClick={() => setDrawerOpen(false)} />
+          <div className="fixed inset-0 z-40 animate-fade-in bg-black/40" aria-hidden="true" onClick={() => setDrawerOpen(false)} />
           <PagePanel
             layout="drawer"
             sources={panel.sources}
@@ -342,7 +339,7 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
         <button
           type="button"
           onClick={() => (wide ? setClosedFor(null) : setDrawerOpen(true))}
-          className="fixed bottom-36 right-4 z-20 flex animate-fade-in items-center gap-2 rounded-full bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-lift transition-colors hover:bg-primary/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          className="fixed bottom-36 right-4 z-20 flex animate-fade-in items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-float transition hover:bg-accent-dark focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
           <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
             <path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" />
@@ -359,7 +356,7 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
           aria-label="Expand sidebar"
           aria-controls="sidebar"
           aria-expanded={false}
-          className="fixed left-3 top-2 z-30 hidden h-10 w-10 animate-fade-in items-center justify-center rounded-xl bg-white/80 text-primary shadow-glass ring-1 ring-black/5 backdrop-blur-xl transition-colors hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent md:flex"
+          className="fixed left-3 top-2 z-30 hidden h-10 w-10 animate-fade-in items-center justify-center rounded-xl border border-line bg-white text-ink shadow-card transition hover:bg-tint focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent md:flex"
         >
           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5"><path d="M13 17l5-5-5-5M6 17l5-5-5-5" /></svg>
         </button>
@@ -370,14 +367,14 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
           sidebarShown ? "lg:pr-[22rem] xl:pr-[26rem]" : ""
         }`}
       >
-        <header className="flex items-center gap-3 border-b border-black/5 bg-white/80 px-4 py-2.5 backdrop-blur-xl md:hidden">
+        <header className="flex items-center gap-3 border-b border-line bg-white px-4 py-2.5 md:hidden">
           <button
             type="button"
             onClick={() => setSidebarOpen(true)}
             aria-label="Open menu"
             aria-controls="sidebar"
             aria-expanded={sidebarOpen}
-            className="-ml-1 rounded-lg p-1.5 text-primary hover:bg-black/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            className="-ml-1 rounded-lg p-1.5 text-ink hover:bg-tint focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           >
             <svg
               aria-hidden="true"

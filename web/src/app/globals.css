@@ -14,6 +14,15 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+@layer base {
+  /* Every button answers a press: it shrinks a little and comes back. The independent `scale` property is used (not `transform`), so it
+     adds to whatever positioning transform a button already has. The transition for it comes from the default transitions (tailwind.config.ts). */
+  button:not(:disabled):active,
+  [role="button"]:active {
+    scale: 0.97;
+  }
+}
+
 @layer components {
   /* A citation inside an answer, such as "(Source: 1949 April.PDF, Page 87)": the text stays as written, with a subtle green underline. */
   .citation {
@@ -24,16 +33,13 @@ body {
     text-decoration-skip-ink: auto;
   }
 
-  /* The soft shapes behind the glass sidebar and the question bar: glass needs something to blur. */
-  .app-backdrop {
-    background-image:
-      radial-gradient(60rem 40rem at -10% -10%, rgb(46 125 50 / 0.09), transparent 60%),
-      radial-gradient(50rem 36rem at 110% 0%, rgb(11 31 58 / 0.08), transparent 60%),
-      radial-gradient(48rem 32rem at 50% 115%, rgb(46 125 50 / 0.07), transparent 60%);
+  /* A card that lifts when the pointer is over it, with a soft green shadow. */
+  .lift {
+    @apply transition duration-200 ease-out hover:-translate-y-0.5 hover:shadow-card-hover motion-reduce:hover:translate-y-0;
   }
 }
 
-/* People who ask their system for less motion get none: no slides, fades, scales or pulsing, and no smooth scrolling. */
+/* People who ask their system for less motion get none: no slides, fades, scales, lifts or bouncing, and no smooth scrolling. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -42,5 +48,10 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+
+  button:not(:disabled):active,
+  [role="button"]:active {
+    scale: 1;
   }
 }

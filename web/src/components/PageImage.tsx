@@ -36,7 +36,7 @@ export default function PageImage({ filename, documentId, pageNumber }: PageImag
       )}
       {status === "error" && (
         <div role="alert" className="py-16 text-center">
-          <p className="text-base text-primary">Could not load this page.</p>
+          <p className="text-base text-ink">Could not load this page.</p>
           <button
             type="button"
             onClick={retry}

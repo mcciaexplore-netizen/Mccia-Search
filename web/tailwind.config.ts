@@ -5,14 +5,18 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        primary: "#0B1F3A", // navy (MCCIA brand): headings, the user's messages, the main text colour of answers
-        accent: "#2E7D32", // green: the main actions (New chat, Send), the active chat, citations
-        "accent-dark": "#256628", // accent when hovered or pressed
-        warn: "#B45309", // amber: failures and alerts in Settings (green would read as success)
-        page: "#F8F9FA", // page background (very light cool grey)
+        // Pure white page, charcoal text, MCCIA green for actions. No navy anywhere.
+        primary: "#2E7D32", // the action colour (buttons, selected chips, focus rings): same green as `accent`
+        accent: "#2E7D32", // MCCIA green: New chat, Send, the user's messages, the active chat, citations
+        "accent-dark": "#256628", // green when hovered
+        tint: "#F0F7F0", // light green tint: hover and selected backgrounds
+        ink: "#1A1A1A", // charcoal: all text and headings
+        muted: "#6B7280", // warm grey: subtitles, captions, timestamps
+        line: "#E5E7EB", // the very subtle border
+        sidebar: "#F5F5F5", // the sidebar, and the empty frames behind pictures
+        page: "#FFFFFF", // the page
         surface: "#FFFFFF", // cards and the AI's messages
-        ink: "#1A1A2E", // body text
-        muted: "#5F6B7A", // secondary text (5.2:1 on white)
+        warn: "#B45309", // amber: failures and alerts in Settings (green would read as success)
       },
       fontFamily: {
         // Inter covers Latin; Noto Sans Devanagari takes over for Marathi/Hindi glyphs.
@@ -24,16 +28,15 @@ const config: Config = {
         ],
       },
       boxShadow: {
-        // The floating question bar, resting and focused; the photo hover; the glass panels.
-        float: "0 8px 30px rgba(11, 31, 58, 0.10), 0 1px 3px rgba(11, 31, 58, 0.06)",
-        "float-focus": "0 12px 36px rgba(46, 125, 50, 0.16), 0 2px 6px rgba(11, 31, 58, 0.08)",
-        lift: "0 10px 24px rgba(11, 31, 58, 0.16)",
-        glass: "0 8px 32px rgba(11, 31, 58, 0.08)",
+        card: "0 1px 2px rgba(26, 26, 26, 0.05), 0 1px 3px rgba(26, 26, 26, 0.06)",
+        "card-hover": "0 10px 24px rgba(46, 125, 50, 0.14), 0 2px 6px rgba(26, 26, 26, 0.06)", // a lifted card: a soft green glow
+        float: "0 4px 20px rgba(26, 26, 26, 0.08), 0 1px 3px rgba(26, 26, 26, 0.06)", // the question bar
+        "float-focus": "0 8px 28px rgba(46, 125, 50, 0.18), 0 2px 6px rgba(26, 26, 26, 0.06)",
       },
-      // Only opacity and transform move: both run on the GPU. prefers-reduced-motion turns all of it off (see globals.css).
+      // Only opacity, transform and scale move: all run on the GPU. prefers-reduced-motion turns all of it off (see globals.css).
       keyframes: {
         "message-in": {
-          from: { opacity: "0", transform: "translateY(8px)" },
+          from: { opacity: "0", transform: "translateY(12px)" },
           to: { opacity: "1", transform: "translateY(0)" },
         },
         "fade-in": { from: { opacity: "0" }, to: { opacity: "1" } },
@@ -41,33 +44,41 @@ const config: Config = {
           from: { opacity: "0", transform: "scale(0.96)" },
           to: { opacity: "1", transform: "scale(1)" },
         },
-        "pulse-dot": {
-          "0%, 80%, 100%": { opacity: "0.3", transform: "scale(0.8)" },
-          "40%": { opacity: "1", transform: "scale(1)" },
+        "dot-bounce": {
+          "0%, 70%, 100%": { transform: "translateY(0)" },
+          "35%": { transform: "translateY(-6px)" },
         },
       },
       animation: {
-        // "backwards", not "both": once it has finished, no transform is left on the message (a transform would trap fixed-position children such as the photo viewer).
-        "message-in": "message-in 200ms ease-out backwards",
-        "fade-in": "fade-in 250ms ease-out both",
-        "scale-in": "scale-in 250ms ease-out both",
-        "pulse-dot": "pulse-dot 1.2s ease-in-out infinite",
+        // "backwards", not "both": once it has finished, no transform is left on the message (a transform would trap fixed-position children).
+        "message-in": "message-in 220ms ease-out backwards",
+        "fade-in": "fade-in 200ms ease-out both",
+        "scale-in": "scale-in 200ms ease-out both",
+        "dot-bounce": "dot-bounce 1.1s ease-in-out infinite",
       },
       transitionDuration: {
-        sidebar: "280ms",
+        sidebar: "250ms",
       },
-      // The typography plugin colours text gray by default; keep answers in brand navy, with a clear heading hierarchy.
+      // Every button gets press feedback (see globals.css: it scales down a little), so `scale` is part of the usual transitions, and the default curve is ease-out.
+      transitionProperty: {
+        DEFAULT: "color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, transform, scale, translate, filter",
+        colors: "color, background-color, border-color, text-decoration-color, fill, stroke, scale",
+      },
+      transitionTimingFunction: {
+        DEFAULT: "cubic-bezier(0, 0, 0.2, 1)",
+      },
+      // The typography plugin colours text gray by default; keep answers charcoal, with a clear heading hierarchy.
       typography: ({ theme }: { theme: (path: string) => string }) => ({
         DEFAULT: {
           css: {
             "--tw-prose-body": theme("colors.ink"),
-            "--tw-prose-headings": theme("colors.primary"),
-            "--tw-prose-bold": theme("colors.primary"),
+            "--tw-prose-headings": theme("colors.ink"),
+            "--tw-prose-bold": theme("colors.ink"),
             "--tw-prose-links": theme("colors.accent"),
             "--tw-prose-bullets": theme("colors.accent"),
-            "--tw-prose-counters": theme("colors.primary"),
-            "--tw-prose-quotes": theme("colors.primary"),
-            lineHeight: "1.7",
+            "--tw-prose-counters": theme("colors.ink"),
+            "--tw-prose-quotes": theme("colors.ink"),
+            lineHeight: "1.6",
             "h1, h2, h3, h4": { fontWeight: "600", letterSpacing: "-0.01em" },
             h1: { fontSize: "1.375em", marginTop: "1.2em", marginBottom: "0.5em" },
             h2: { fontSize: "1.2em", marginTop: "1.2em", marginBottom: "0.45em" },

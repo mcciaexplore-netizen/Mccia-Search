@@ -20,7 +20,7 @@ export default function MessageBubble({ message }: { message: Message }) {
   if (message.role === "user") {
     return (
       <div className="flex animate-message-in flex-col items-end">
-        <div className="max-w-[88%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-primary px-4 py-3 text-base leading-relaxed text-white md:max-w-[80%]">
+        <div className="max-w-[88%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-accent px-4 py-3 text-base leading-relaxed text-white md:max-w-[80%]">
           {message.content}
         </div>
         {time}
@@ -34,11 +34,11 @@ export default function MessageBubble({ message }: { message: Message }) {
 
   return (
     <div className="flex animate-message-in flex-col items-start">
-      <div className="w-full rounded-2xl rounded-bl-md bg-surface px-5 py-4 text-ink ring-1 ring-black/[0.06]">
+      <div className="w-full rounded-2xl rounded-bl-md border border-line bg-white px-5 py-4 text-ink">
         {photosAnswer ? (
-          <p className="text-base font-semibold text-primary">{PHOTOS_FOUND_TEXT}</p>
+          <p className="text-base font-semibold leading-relaxed text-ink">{PHOTOS_FOUND_TEXT}</p>
         ) : (
-          <div className="prose prose-base max-w-none break-words">
+          <div className="prose max-w-none break-words">
             {/* Images are not rendered: a remote image URL in a model answer could leak data. */}
             <ReactMarkdown disallowedElements={["img"]} rehypePlugins={[rehypeCitations]}>
               {message.content}

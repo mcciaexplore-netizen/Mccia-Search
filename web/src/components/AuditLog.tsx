@@ -72,7 +72,7 @@ export default function AuditLog() {
     <div>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="text-xl font-semibold text-primary">Audit log</h2>
+          <h2 className="text-xl font-semibold text-ink">Audit log</h2>
           <p className="mt-1 max-w-xl text-base text-muted">
             A record of every question asked and every sync, newest first: when, what, and how it went.
           </p>
@@ -83,7 +83,7 @@ export default function AuditLog() {
             id="audit-filter"
             value={filter}
             onChange={(event) => setFilter(event.target.value as EventFilter)}
-            className="rounded-lg bg-surface px-3 py-2 text-sm ring-1 ring-black/10 focus:outline-none focus:ring-2 focus:ring-primary/40"
+            className="rounded-lg bg-surface px-3 py-2 text-sm ring-1 ring-line focus:outline-none focus:ring-2 focus:ring-primary/40"
           >
             <option value="all">Everything</option>
             <option value="chat">Questions</option>
@@ -103,16 +103,16 @@ export default function AuditLog() {
       {error && (
         <div role="alert" className="mt-6 rounded-xl border border-warn/40 bg-warn/10 px-4 py-4 text-base text-ink">
           Could not load the audit log.{" "}
-          <button type="button" onClick={() => void load(false, filter, 0)} className="font-semibold text-primary underline underline-offset-2">
+          <button type="button" onClick={() => void load(false, filter, 0)} className="font-semibold text-ink underline underline-offset-2">
             Try again
           </button>
         </div>
       )}
 
       {!error && (
-        <div className="mt-6 overflow-x-auto rounded-xl bg-surface shadow-sm ring-1 ring-black/5">
+        <div className="mt-6 overflow-x-auto rounded-xl bg-surface shadow-sm ring-1 ring-line">
           <table className="w-full min-w-[46rem] text-left text-sm">
-            <thead className="border-b border-black/5 text-muted">
+            <thead className="border-b border-line text-muted">
               <tr>
                 <th scope="col" className="px-4 py-3 font-medium">When</th>
                 <th scope="col" className="px-4 py-3 font-medium">Type</th>
@@ -130,7 +130,7 @@ export default function AuditLog() {
                 return (
                   <tr key={entry.id} className="align-top">
                     <td className="whitespace-nowrap px-4 py-3 text-muted">{formatDateTime(entry.occurred_at)}</td>
-                    <td className="px-4 py-3 text-primary">{entry.event === "chat" ? "Question" : "Sync"}</td>
+                    <td className="px-4 py-3 text-ink">{entry.event === "chat" ? "Question" : "Sync"}</td>
                     <td className="max-w-[24rem] px-4 py-3 text-ink">
                       <span className="line-clamp-2 break-words" title={entry.query ?? ""}>{entry.query ?? ""}</span>
                       {entry.event === "sync" && entry.detail && (
@@ -169,7 +169,7 @@ export default function AuditLog() {
               type="button"
               onClick={() => void load(true, filter, items.length)}
               disabled={loading}
-              className="rounded-lg bg-surface px-4 py-2 text-sm font-semibold text-primary ring-1 ring-black/10 transition hover:ring-primary/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-lg bg-surface px-4 py-2 text-sm font-semibold text-ink ring-1 ring-line transition hover:ring-primary/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-60"
             >
               Load more
             </button>

@@ -28,10 +28,10 @@ const FILTERS: { value: Filter; label: string }[] = [
 const STATUS_BADGE: Record<string, { label: string; className: string }> = {
   completed: { label: "Ready", className: "bg-emerald-100 text-emerald-800" },
   failed: { label: "Failed", className: "bg-warn/15 text-ink" },
-  processing: { label: "In progress", className: "bg-sky-100 text-sky-800" },
-  pending: { label: "In progress", className: "bg-sky-100 text-sky-800" },
+  processing: { label: "In progress", className: "bg-sidebar text-ink ring-1 ring-line" },
+  pending: { label: "In progress", className: "bg-sidebar text-ink ring-1 ring-line" },
   // The text is saved but not yet embedded, so search cannot find it.
-  text_saved: { label: "Waiting for embeddings", className: "bg-sky-100 text-sky-800" },
+  text_saved: { label: "Waiting for embeddings", className: "bg-sidebar text-ink ring-1 ring-line" },
 };
 
 // Make sure the payload really is a document list before showing it.
@@ -52,9 +52,9 @@ function isDocumentsResponse(value: unknown): value is DocumentsResponse {
 
 function SummaryCard({ label, value, tone = "normal" }: { label: string; value: string; tone?: "normal" | "warn" }) {
   return (
-    <div className="rounded-xl bg-surface px-4 py-3 shadow-sm ring-1 ring-black/5">
+    <div className="lift rounded-xl bg-surface px-4 py-3 shadow-card ring-1 ring-line">
       <p className="text-sm text-muted">{label}</p>
-      <p className={`mt-0.5 text-2xl font-semibold ${tone === "warn" ? "text-warn" : "text-primary"}`}>{value}</p>
+      <p className={`mt-0.5 text-2xl font-semibold ${tone === "warn" ? "text-warn" : "text-ink"}`}>{value}</p>
     </div>
   );
 }
@@ -121,7 +121,7 @@ export default function KnowledgeBase() {
     <div>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="text-xl font-semibold text-primary">Knowledge base</h2>
+          <h2 className="text-xl font-semibold text-ink">Knowledge base</h2>
           <p className="mt-1 max-w-xl text-base text-muted">
             The documents MCCIA Search answers from. Only documents marked Ready can be searched.
           </p>
@@ -139,7 +139,7 @@ export default function KnowledgeBase() {
       {error && !data && (
         <div role="alert" className="mt-6 rounded-xl border border-warn/40 bg-warn/10 px-4 py-4 text-base text-ink">
           Could not load the knowledge base.{" "}
-          <button type="button" onClick={() => void load()} className="font-semibold text-primary underline underline-offset-2">
+          <button type="button" onClick={() => void load()} className="font-semibold text-ink underline underline-offset-2">
             Try again
           </button>
         </div>
@@ -171,7 +171,7 @@ export default function KnowledgeBase() {
                   onClick={() => setFilter(f.value)}
                   aria-pressed={filter === f.value}
                   className={`rounded-full px-3.5 py-1.5 text-sm font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${
-                    filter === f.value ? "bg-primary text-white" : "bg-surface text-primary ring-1 ring-black/10 hover:ring-primary/40"
+                    filter === f.value ? "bg-primary text-white" : "bg-surface text-ink ring-1 ring-line hover:ring-primary/40"
                   }`}
                 >
                   {f.label}
@@ -184,13 +184,13 @@ export default function KnowledgeBase() {
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search documents..."
               aria-label="Search documents"
-              className="w-full rounded-lg bg-surface px-3.5 py-2 text-sm ring-1 ring-black/10 placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 sm:w-64"
+              className="w-full rounded-lg bg-surface px-3.5 py-2 text-sm ring-1 ring-line placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 sm:w-64"
             />
           </div>
 
-          <div className="mt-4 overflow-x-auto rounded-xl bg-surface shadow-sm ring-1 ring-black/5">
+          <div className="mt-4 overflow-x-auto rounded-xl bg-surface shadow-sm ring-1 ring-line">
             <table className="w-full min-w-[34rem] text-left text-sm">
-              <thead className="border-b border-black/5 text-muted">
+              <thead className="border-b border-line text-muted">
                 <tr>
                   <th scope="col" className="px-4 py-3 font-medium">Document</th>
                   <th scope="col" className="px-4 py-3 font-medium">Status</th>
@@ -204,7 +204,7 @@ export default function KnowledgeBase() {
                   const badge = STATUS_BADGE[d.status] ?? { label: d.status, className: "bg-gray-100 text-ink" };
                   return (
                     <tr key={d.id}>
-                      <td className="max-w-[20rem] truncate px-4 py-3 font-medium text-primary" title={d.filename}>
+                      <td className="max-w-[20rem] truncate px-4 py-3 font-medium text-ink" title={d.filename}>
                         {d.filename}
                       </td>
                       <td className="px-4 py-3">

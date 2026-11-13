@@ -18,12 +18,12 @@ export default function SsoErrorPage({ searchParams }: { searchParams: { reason?
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center px-6 py-10 text-center">
       <Logo width={200} />
-      <h1 className="mt-8 text-2xl font-semibold text-primary">{message.title}</h1>
+      <h1 className="mt-8 text-2xl font-semibold text-ink">{message.title}</h1>
       <p className="mt-3 max-w-md text-lg text-muted">{message.text}</p>
       {settings.ok && (
         <div className="mt-8 flex flex-wrap justify-center gap-3">
           <a href={settings.launchUrl} className="rounded-xl bg-accent px-5 py-2.5 font-semibold text-white transition hover:bg-accent-dark">Try again</a>
-          <a href={settings.hubUrl} className="rounded-xl border border-primary/30 px-5 py-2.5 font-semibold text-primary transition hover:bg-primary/5">Back to App Hub</a>
+          <a href={settings.hubUrl} className="rounded-xl border border-line px-5 py-2.5 font-semibold text-ink transition hover:bg-tint">Back to App Hub</a>
         </div>
       )}
     </main>

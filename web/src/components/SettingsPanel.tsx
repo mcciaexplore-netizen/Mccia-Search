@@ -25,11 +25,11 @@ export default function SettingsPanel() {
   };
 
   return (
-    <section aria-label="Settings" className="h-full overflow-y-auto">
+    <section aria-label="Settings" className="h-full animate-fade-in overflow-y-auto">
       <div className="mx-auto max-w-5xl px-4 py-6 md:px-8 md:py-8">
-        <h1 className="text-2xl font-semibold text-primary md:text-3xl">Settings</h1>
+        <h1 className="text-2xl font-semibold text-ink md:text-3xl">Settings</h1>
 
-        <div role="tablist" aria-label="Settings sections" className="mt-5 flex gap-1 border-b border-black/10">
+        <div role="tablist" aria-label="Settings sections" className="mt-5 flex gap-1 border-b border-line">
           {TABS.map((t, index) => (
             <button
               key={t.id}
@@ -42,7 +42,7 @@ export default function SettingsPanel() {
               onClick={() => setTab(t.id)}
               onKeyDown={(event) => handleKeyDown(event, index)}
               className={`-mb-px border-b-2 px-4 py-2.5 text-base font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${
-                tab === t.id ? "border-accent text-primary" : "border-transparent text-muted hover:text-primary"
+                tab === t.id ? "border-accent text-ink" : "border-transparent text-muted hover:text-ink"
               }`}
             >
               {t.label}
@@ -51,10 +51,11 @@ export default function SettingsPanel() {
         </div>
 
         <div
+          key={tab}
           role="tabpanel"
           id={`settings-panel-${tab}`}
           aria-labelledby={`settings-tab-${tab}`}
-          className="pt-6"
+          className="animate-fade-in pt-6"
         >
           {tab === "knowledge" ? <KnowledgeBase /> : <AuditLog />}
         </div>

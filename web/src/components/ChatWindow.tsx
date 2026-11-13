@@ -7,6 +7,7 @@ import { historyOf } from "@/lib/conversation";
 import { cleanPhotos } from "@/lib/photos";
 import { loadDraft, saveDraft, startRelaunch, wasRelaunched } from "@/lib/draft";
 import type { Message } from "@/lib/types";
+import Logo from "./Logo";
 import MessageBubble from "./MessageBubble";
 
 const WELCOME_HEADING = "How can I help you explore MCCIA?";
@@ -48,23 +49,36 @@ const ICON_PATHS: Record<PromptIcon, string> = {
 
 function EmptyState({ onPick }: { onPick: (question: string) => void }) {
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-[760px] animate-fade-in flex-col items-center justify-center px-5 pb-40 pt-10 text-center">
-      <h1 className="text-balance text-3xl font-semibold tracking-tight text-primary md:text-4xl">{WELCOME_HEADING}</h1>
-      <p className="mt-3 max-w-md text-base leading-relaxed text-muted md:text-lg">{WELCOME_SUBTITLE}</p>
+    <div className="mx-auto flex min-h-full w-full max-w-[760px] flex-col items-center justify-center px-5 pb-40 pt-10 text-center">
+      <div className="animate-message-in">
+        <Logo width={260} />
+      </div>
+      <h1
+        className="mt-8 animate-message-in text-balance text-3xl font-semibold tracking-tight text-ink md:text-4xl"
+        style={{ animationDelay: "60ms" }}
+      >
+        {WELCOME_HEADING}
+      </h1>
+      <p
+        className="mt-3 max-w-md animate-message-in text-base leading-relaxed text-muted md:text-lg"
+        style={{ animationDelay: "120ms" }}
+      >
+        {WELCOME_SUBTITLE}
+      </p>
       <ul className="mt-9 grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
-        {SUGGESTED_PROMPTS.map(({ text, icon }) => (
-          <li key={text}>
+        {SUGGESTED_PROMPTS.map(({ text, icon }, index) => (
+          <li key={text} className="animate-message-in" style={{ animationDelay: `${180 + index * 50}ms` }}>
             <button
               type="button"
               onClick={() => onPick(text)}
-              className="group flex w-full items-center gap-3 rounded-2xl bg-white/80 p-4 text-left ring-1 ring-black/[0.06] backdrop-blur transition duration-200 ease-out hover:-translate-y-0.5 hover:bg-white hover:shadow-float hover:ring-accent/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent motion-reduce:hover:translate-y-0"
+              className="lift flex h-full w-full items-center gap-3 rounded-xl border border-l-4 border-line border-l-accent bg-white p-4 text-left shadow-card focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
-              <span aria-hidden="true" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent/10 text-accent">
+              <span aria-hidden="true" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-tint text-accent">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
                   <path d={ICON_PATHS[icon]} />
                 </svg>
               </span>
-              <span className="text-[15px] font-medium leading-snug text-primary">{text}</span>
+              <span className="text-[15px] font-medium leading-snug text-ink">{text}</span>
             </button>
           </li>
         ))}
@@ -76,12 +90,12 @@ function EmptyState({ onPick }: { onPick: (question: string) => void }) {
 function TypingIndicator() {
   return (
     <div className="flex animate-message-in" aria-hidden="true">
-      <div className="flex items-center gap-1.5 rounded-2xl rounded-bl-md bg-surface px-4 py-3.5 ring-1 ring-black/[0.06]">
+      <div className="flex items-center gap-1.5 rounded-2xl rounded-bl-md border border-line bg-white px-4 py-3.5">
         {[0, 1, 2].map((i) => (
           <span
             key={i}
-            className="h-2 w-2 animate-pulse-dot rounded-full bg-accent motion-reduce:animate-none"
-            style={{ animationDelay: `${i * 160}ms` }}
+            className="h-2 w-2 animate-dot-bounce rounded-full bg-accent motion-reduce:animate-none"
+            style={{ animationDelay: `${i * 150}ms` }}
           />
         ))}
       </div>
@@ -236,7 +250,7 @@ export default function ChatWindow({ initialMessages = [], onMessagesChange }: C
   };
 
   return (
-    <section className="relative flex h-full min-h-0 flex-col">
+    <section className="relative flex h-full min-h-0 animate-fade-in flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto">
         {messages.length === 0 ? (
           <EmptyState onPick={pickExample} />
@@ -257,10 +271,10 @@ export default function ChatWindow({ initialMessages = [], onMessagesChange }: C
       </div>
 
       {/* The question bar floats over the bottom of the conversation, which scrolls beneath it. */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-page via-page/90 to-transparent px-4 pb-4 pt-10 md:px-6">
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-white via-white/90 to-transparent px-4 pb-4 pt-10 md:px-6">
         <form
           onSubmit={handleSubmit}
-          className="pointer-events-auto mx-auto flex w-full max-w-[760px] items-end gap-2 rounded-[28px] bg-white/80 p-2 pl-5 shadow-float ring-1 ring-black/[0.06] backdrop-blur-xl transition-[box-shadow,background-color,transform] duration-200 ease-out focus-within:-translate-y-0.5 focus-within:bg-white focus-within:shadow-float-focus focus-within:ring-2 focus-within:ring-accent/40 motion-reduce:focus-within:translate-y-0"
+          className="pointer-events-auto mx-auto flex w-full max-w-[760px] items-end gap-2 rounded-[28px] border border-line bg-white p-2 pl-5 shadow-float transition-[box-shadow,border-color,transform] duration-200 ease-out focus-within:-translate-y-0.5 focus-within:border-accent focus-within:shadow-float-focus motion-reduce:focus-within:translate-y-0"
         >
           <textarea
             ref={inputRef}
