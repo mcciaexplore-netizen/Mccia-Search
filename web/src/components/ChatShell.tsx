@@ -391,7 +391,7 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
               <path d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <div className="rounded-lg bg-white px-2.5 py-1.5 ring-1 ring-black/5">
+          <div className="px-0.5">
             <Logo width={88} />
           </div>
           <span className="text-sm font-semibold text-accent">AI Search</span>
