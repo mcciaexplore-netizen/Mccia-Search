@@ -110,6 +110,7 @@ def from_env() -> SupabaseStore | None:
     The key is SUPABASE_SERVICE_ROLE_KEY (SUPABASE_SERVICE_KEY also works). The address is SUPABASE_URL, or else worked out from SUPABASE_DATABASE_URL,
     which is already in that file (or DATABASE_URL, as on the server).
     """
+    import config  # noqa: F401  (importing it loads the project's .env into the environment, which is where the server keeps the key)
     from dotenv import dotenv_values
 
     file_values = dotenv_values(KEY_FILE) if KEY_FILE.exists() else {}

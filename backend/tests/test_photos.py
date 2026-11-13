@@ -498,3 +498,17 @@ def test_any_other_bucket_error_is_an_error_without_the_key():
     with pytest.raises(StorageError) as error:
         store.ensure_bucket()
     assert "401" in str(error.value) and SECRET not in str(error.value)
+
+
+def test_the_store_finds_the_key_the_servers_dotenv_gives_the_environment_even_if_nothing_else_loaded_it_yet(monkeypatch, tmp_path):
+    """On the server the key is in the backend's .env, which config.py loads into the environment; asking for the store first must not miss it."""
+    import importlib
+    import sys
+
+    for name in ("SUPABASE_URL", "SUPABASE_SERVICE_KEY", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_DATABASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(store_module, "KEY_FILE", tmp_path / "missing")
+    monkeypatch.setenv("DATABASE_URL", DB_URL)  # as on the server: the pooler address is DATABASE_URL, the key arrives as an environment variable
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", SECRET)
+    built = store_module.from_env()
+    assert built is not None and built.base == "https://abcdefghijklmnopqrst.supabase.co/storage/v1" and SECRET not in repr(built)
