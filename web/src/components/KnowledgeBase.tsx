@@ -50,10 +50,13 @@ function isDocumentsResponse(value: unknown): value is DocumentsResponse {
   );
 }
 
-function SummaryCard({ label, value, tone = "normal" }: { label: string; value: string; tone?: "normal" | "warn" }) {
+function SummaryCard({ label, value, dot, tone = "normal" }: { label: string; value: string; dot: string; tone?: "normal" | "warn" }) {
   return (
     <div className="lift rounded-xl bg-surface px-4 py-3 shadow-card ring-1 ring-line">
-      <p className="text-sm text-muted">{label}</p>
+      <p className="flex items-center gap-2 text-sm text-muted">
+        <span aria-hidden="true" className={`h-2 w-2 rounded-full ${dot}`} />
+        {label}
+      </p>
       <p className={`mt-0.5 text-2xl font-semibold ${tone === "warn" ? "text-warn" : "text-ink"}`}>{value}</p>
     </div>
   );
@@ -150,10 +153,10 @@ export default function KnowledgeBase() {
       {data && (
         <>
           <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-            <SummaryCard label="Ready to search" value={formatNumber(data.summary.completed)} />
-            <SummaryCard label="Pages indexed" value={formatNumber(readyPages)} />
-            <SummaryCard label="In progress" value={formatNumber(data.summary.pending)} />
-            <SummaryCard label="Failed" value={formatNumber(data.summary.failed)} tone={data.summary.failed > 0 ? "warn" : "normal"} />
+            <SummaryCard dot="bg-accent" label="Ready to search" value={formatNumber(data.summary.completed)} />
+            <SummaryCard dot="bg-azure" label="Pages indexed" value={formatNumber(readyPages)} />
+            <SummaryCard dot="bg-sun" label="In progress" value={formatNumber(data.summary.pending)} />
+            <SummaryCard dot="bg-warn" label="Failed" value={formatNumber(data.summary.failed)} tone={data.summary.failed > 0 ? "warn" : "normal"} />
           </div>
 
           {error && (

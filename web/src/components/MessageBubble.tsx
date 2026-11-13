@@ -38,6 +38,14 @@ export default function MessageBubble({ message }: { message: Message }) {
   return (
     <div className="flex animate-message-in flex-col items-start">
       <div className="w-full rounded-2xl rounded-bl-md border border-line bg-white px-5 py-4 text-ink">
+        <div className="mb-2.5 flex items-center gap-2">
+          <span aria-hidden="true" className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-accent to-azure text-white">
+            <svg viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5">
+              <path d="M12 2l1.8 5.4L19 9l-5.2 1.6L12 16l-1.8-5.4L5 9l5.2-1.6L12 2zM19 14l.9 2.6 2.6.9-2.6.9L19 21l-.9-2.6-2.6-.9 2.6-.9L19 14z" />
+            </svg>
+          </span>
+          <span className="text-xs font-semibold text-muted">MCCIA Search</span>
+        </div>
         {photosAnswer ? (
           <p className="text-base font-semibold leading-relaxed text-ink">{PHOTOS_FOUND_TEXT}</p>
         ) : (

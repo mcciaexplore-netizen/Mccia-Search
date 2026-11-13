@@ -24,6 +24,14 @@ body {
 }
 
 @layer components {
+  /* A faint wash of the three colours behind the welcome heading: blue, green and amber, each barely there. */
+  .welcome-glow {
+    background:
+      radial-gradient(closest-side, rgb(30 111 191 / 0.10), transparent) 15% 55% / 55% 100% no-repeat,
+      radial-gradient(closest-side, rgb(46 125 50 / 0.10), transparent) 85% 40% / 55% 100% no-repeat,
+      radial-gradient(closest-side, rgb(217 119 6 / 0.08), transparent) 50% 100% / 50% 80% no-repeat;
+  }
+
   /* A card that lifts when the pointer is over it, with a soft green shadow. */
   .lift {
     @apply transition duration-200 ease-out hover:-translate-y-0.5 hover:shadow-card-hover motion-reduce:hover:translate-y-0;

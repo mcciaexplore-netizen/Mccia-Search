@@ -67,7 +67,12 @@ export default function PhotoResults({
               </button>
               <div className="px-3 py-2.5">
                 <p className="line-clamp-2 break-words text-sm leading-snug text-ink">{photo.caption || "No caption"}</p>
-                <p className="mt-0.5 text-xs text-muted">{photoSourceLabel(photo)}</p>
+                <p className="mt-1 flex items-center gap-1.5 text-xs text-muted">
+                  <svg aria-hidden="true" viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5 shrink-0 text-azure">
+                    <path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" />
+                  </svg>
+                  {photoSourceLabel(photo)}
+                </p>
               </div>
             </div>
           </li>

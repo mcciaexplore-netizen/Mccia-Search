@@ -15,12 +15,21 @@ const WELCOME_SUBTITLE = "Search through MCCIA\u2019s documents, history and arc
 
 type PromptIcon = "photo" | "person" | "book" | "building";
 
-// Picking one puts it in the question box (it is not sent), so it can be changed first.
-const SUGGESTED_PROMPTS: { text: string; icon: PromptIcon }[] = [
-  { text: "Find historical MCCIA photographs", icon: "photo" },
-  { text: "Search for information about past presidents", icon: "person" },
-  { text: "Explore MCCIA\u2019s historical publications", icon: "book" },
-  { text: "Find information about a specific company", icon: "building" },
+type Tone = "azure" | "sun" | "iris" | "accent";
+
+// Each card has a colour of its own (left border, icon, and the shadow it lifts with). Picking one puts it in the question box (it is not sent), so it can be changed first.
+const TONES: Record<Tone, { border: string; icon: string; shadow: string }> = {
+  azure: { border: "border-l-azure", icon: "bg-azure-tint text-azure", shadow: "hover:shadow-card-hover-azure" },
+  sun: { border: "border-l-sun", icon: "bg-sun-tint text-warn", shadow: "hover:shadow-card-hover-sun" },
+  iris: { border: "border-l-iris", icon: "bg-iris-tint text-iris", shadow: "hover:shadow-card-hover-iris" },
+  accent: { border: "border-l-accent", icon: "bg-tint text-accent", shadow: "" },
+};
+
+const SUGGESTED_PROMPTS: { text: string; icon: PromptIcon; tone: Tone }[] = [
+  { text: "Find historical MCCIA photographs", icon: "photo", tone: "azure" },
+  { text: "Search for information about past presidents", icon: "person", tone: "sun" },
+  { text: "Explore MCCIA\u2019s historical publications", icon: "book", tone: "iris" },
+  { text: "Find information about a specific company", icon: "building", tone: "accent" },
 ];
 
 const MAX_INPUT_HEIGHT_PX = 160;
@@ -49,36 +58,58 @@ const ICON_PATHS: Record<PromptIcon, string> = {
 
 function EmptyState({ onPick }: { onPick: (question: string) => void }) {
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-[760px] flex-col items-center justify-center px-5 pb-40 pt-10 text-center">
+    <div className="relative isolate mx-auto flex min-h-full w-full max-w-[760px] flex-col items-center justify-center px-5 pb-40 pt-10 text-center">
+      {/* A faint wash of blue, green and amber behind the heading. */}
+      <div aria-hidden="true" className="welcome-glow pointer-events-none absolute inset-x-0 top-[6%] -z-10 h-[62%]" />
       <div className="animate-message-in">
         <Logo width={260} />
       </div>
+      <p
+        className="mt-6 inline-flex animate-message-in items-center gap-2 rounded-full bg-azure-tint px-3 py-1 text-xs font-medium text-azure"
+        style={{ animationDelay: "40ms" }}
+      >
+        <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-azure" />
+        Sampada archive · 1945–2017
+      </p>
       <h1
-        className="mt-8 animate-message-in text-balance text-3xl font-semibold tracking-tight text-ink md:text-4xl"
-        style={{ animationDelay: "60ms" }}
+        className="mt-4 animate-message-in text-balance text-3xl font-semibold tracking-tight text-ink md:text-4xl"
+        style={{ animationDelay: "80ms" }}
       >
         {WELCOME_HEADING}
       </h1>
       <p
         className="mt-3 max-w-md animate-message-in text-base leading-relaxed text-muted md:text-lg"
-        style={{ animationDelay: "120ms" }}
+        style={{ animationDelay: "130ms" }}
       >
         {WELCOME_SUBTITLE}
       </p>
       <ul className="mt-9 grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
-        {SUGGESTED_PROMPTS.map(({ text, icon }, index) => (
-          <li key={text} className="animate-message-in" style={{ animationDelay: `${180 + index * 50}ms` }}>
+        {SUGGESTED_PROMPTS.map(({ text, icon, tone }, index) => (
+          <li key={text} className="animate-message-in" style={{ animationDelay: `${190 + index * 50}ms` }}>
             <button
               type="button"
               onClick={() => onPick(text)}
-              className="lift flex h-full w-full items-center gap-3 rounded-xl border border-l-4 border-line border-l-accent bg-white p-4 text-left shadow-card focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              className={`lift group flex h-full w-full items-center gap-3 rounded-xl border border-l-4 border-line bg-white p-4 text-left shadow-card focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${TONES[tone].border} ${TONES[tone].shadow}`}
             >
-              <span aria-hidden="true" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-tint text-accent">
+              <span aria-hidden="true" className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${TONES[tone].icon}`}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
                   <path d={ICON_PATHS[icon]} />
                 </svg>
               </span>
-              <span className="text-[15px] font-medium leading-snug text-ink">{text}</span>
+              <span className="flex-1 text-[15px] font-medium leading-snug text-ink">{text}</span>
+              {/* An arrow slides in on hover. */}
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-4 w-4 shrink-0 -translate-x-1 text-muted opacity-0 transition duration-200 group-hover:translate-x-0 group-hover:opacity-100 motion-reduce:translate-x-0"
+              >
+                <path d="M5 12h14M13 6l6 6-6 6" />
+              </svg>
             </button>
           </li>
         ))}
@@ -91,10 +122,10 @@ function TypingIndicator() {
   return (
     <div className="flex animate-message-in" aria-hidden="true">
       <div className="flex items-center gap-1.5 rounded-2xl rounded-bl-md border border-line bg-white px-4 py-3.5">
-        {[0, 1, 2].map((i) => (
+        {["bg-accent", "bg-azure", "bg-sun"].map((color, i) => (
           <span
-            key={i}
-            className="h-2 w-2 animate-dot-bounce rounded-full bg-accent motion-reduce:animate-none"
+            key={color}
+            className={`h-2 w-2 animate-dot-bounce rounded-full ${color} motion-reduce:animate-none`}
             style={{ animationDelay: `${i * 150}ms` }}
           />
         ))}

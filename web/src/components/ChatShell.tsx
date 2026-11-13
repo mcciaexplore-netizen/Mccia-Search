@@ -174,7 +174,7 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
               <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-5 w-5"><path d="M6 6l12 12M18 6L6 18" /></svg>
             </button>
           </div>
-          <p className="mt-2.5 px-0.5 text-sm font-semibold tracking-wider text-accent">AI Search</p>
+          <p className="mt-2.5 w-fit bg-gradient-to-r from-accent to-azure bg-clip-text px-0.5 text-sm font-semibold tracking-wider text-transparent">AI Search</p>
 
           <button
             type="button"
@@ -227,7 +227,7 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
           {user && (
             <div className="mt-1 rounded-xl border border-line bg-white p-2.5">
               <div className="flex items-center gap-3">
-                <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent text-sm font-semibold text-white">
+                <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-accent to-azure text-sm font-semibold text-white">
                   {initials}
                 </span>
                 <div className="min-w-0 flex-1">
@@ -295,7 +295,7 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
           <div className="px-0.5">
             <Logo width={88} />
           </div>
-          <span className="text-sm font-semibold text-accent">AI Search</span>
+          <span className="bg-gradient-to-r from-accent to-azure bg-clip-text text-sm font-semibold text-transparent">AI Search</span>
         </header>
 
         <div className="min-h-0 flex-1">
