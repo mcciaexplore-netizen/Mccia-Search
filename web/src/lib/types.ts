@@ -6,6 +6,20 @@ export interface Source {
   similarity: number;
 }
 
+/** A photograph from a scanned page, found for a question that asked for one. Its picture is at /api/photos/{id} (see lib/photos.ts). */
+export interface Photo {
+  id: number;
+  document_id: number;
+  page_number: number;
+  filename: string;
+  /** The issue's years as they read in an answer, such as "1964-65". */
+  year: string | null;
+  /** The caption printed beside it; "" when none was found. */
+  caption: string;
+  kind: "photo" | "advertisement" | "illustration";
+  contains_face: boolean;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
@@ -14,6 +28,8 @@ export interface Message {
   found?: boolean;
   /** The answer is a question back ("Could you clarify who/what you are referring to?"), not a result. */
   clarify?: boolean;
+  /** Photographs matching the question, when it asked for photographs, pictures or images. */
+  photos?: Photo[];
   timestamp: Date;
 }
 
@@ -22,6 +38,7 @@ export interface ChatResponse {
   sources: Source[];
   found: boolean;
   clarify?: boolean;
+  photos?: Photo[];
 }
 
 export interface Chat {

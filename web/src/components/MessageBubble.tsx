@@ -1,5 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import type { Message } from "@/lib/types";
+import PhotoResults from "./PhotoResults";
 
 function formatTime(date: Date): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -34,6 +35,7 @@ export default function MessageBubble({ message }: { message: Message }) {
             No results found
           </span>
         )}
+        {message.photos && message.photos.length > 0 && <PhotoResults photos={message.photos} />}
       </div>
       {time}
     </div>

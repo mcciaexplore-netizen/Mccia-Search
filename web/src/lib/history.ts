@@ -1,4 +1,5 @@
 import type { Chat, Message, Source } from "./types";
+import { cleanPhotos } from "./photos";
 
 // Chat history lives in this browser's localStorage: nothing is sent to the server,
 // and it is not shared between browsers or people.
@@ -40,6 +41,8 @@ function reviveMessage(raw: unknown): Message | null {
   }
   if (typeof m.found === "boolean") message.found = m.found;
   if (m.clarify === true) message.clarify = true;
+  const photos = cleanPhotos(m.photos);
+  if (photos.length) message.photos = photos;
   return message;
 }
 

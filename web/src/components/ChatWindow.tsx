@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import { SessionExpiredError, sendChat } from "@/lib/api";
 import { historyOf } from "@/lib/conversation";
+import { cleanPhotos } from "@/lib/photos";
 import { loadDraft, saveDraft, startRelaunch, wasRelaunched } from "@/lib/draft";
 import type { Message } from "@/lib/types";
 import Logo from "./Logo";
@@ -161,6 +162,7 @@ export default function ChatWindow({ initialMessages = [], onMessagesChange }: C
       if (typeof response?.answer !== "string") {
         throw new Error("The server sent an unexpected response.");
       }
+      const photos = cleanPhotos(response.photos);
       reply = {
         id: newId(),
         role: "assistant",
@@ -168,6 +170,7 @@ export default function ChatWindow({ initialMessages = [], onMessagesChange }: C
         sources: response.sources,
         found: response.found,
         ...(response.clarify === true ? { clarify: true } : {}),
+        ...(photos.length ? { photos } : {}),
         timestamp: new Date(),
       };
     } catch (err) {
