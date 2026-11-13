@@ -5,8 +5,19 @@ import { pageImageUrl } from "@/lib/api";
 import { photoAlt, photoImageUrl, photoSourceLabel } from "@/lib/photos";
 import type { Photo } from "@/lib/types";
 
-/** The photographs found for a question, as a strip of thumbnails under the answer. Clicking one shows it large. */
-export default function PhotoResults({ photos }: { photos: Photo[] }) {
+/**
+ * The photographs found for a question, as a strip of thumbnails under the answer. Clicking one shows it large.
+ * `showHeading` is false when the message already introduces them itself; `onAllBroken` is called when none of them could be loaded.
+ */
+export default function PhotoResults({
+  photos,
+  showHeading = true,
+  onAllBroken,
+}: {
+  photos: Photo[];
+  showHeading?: boolean;
+  onAllBroken?: () => void;
+}) {
   const [open, setOpen] = useState<Photo | null>(null);
   // A picture that cannot be loaded (removed, or the server was busy) is left out rather than shown as a broken box.
   const [broken, setBroken] = useState<Set<number>>(new Set());
@@ -17,12 +28,16 @@ export default function PhotoResults({ photos }: { photos: Photo[] }) {
     setOpen(null);
     opener.current?.focus();
   }, []);
+  const noneLeft = photos.length > 0 && shown.length === 0;
+  useEffect(() => {
+    if (noneLeft) onAllBroken?.();
+  }, [noneLeft, onAllBroken]);
 
   if (shown.length === 0) return null;
   return (
-    <section aria-label="Photographs from the archive" className="mt-4">
-      <h3 className="text-sm font-medium text-muted">Photographs from the archive</h3>
-      <ul className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3">
+    <section aria-label="Photographs from the archive" className={showHeading ? "mt-4" : "mt-3"}>
+      {showHeading && <h3 className="text-sm font-medium text-muted">Photographs from the archive</h3>}
+      <ul className={`${showHeading ? "mt-2 " : ""}grid grid-cols-2 gap-3 sm:grid-cols-3`}>
         {shown.map((photo) => (
           <li key={photo.id} className="min-w-0">
             <button

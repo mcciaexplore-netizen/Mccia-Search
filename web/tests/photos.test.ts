@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { MAX_PHOTOS, cleanPhotos, photoAlt, photoImageUrl, photoSourceLabel } from "../src/lib/photos";
+import { MAX_PHOTOS, PHOTOS_FOUND_TEXT, cleanPhotos, photoAlt, photoImageUrl, photoSourceLabel, photosAreTheAnswer } from "../src/lib/photos";
 
 const photo = (over: Record<string, unknown> = {}) => ({
   id: 7, document_id: 3, page_number: 214, filename: "1961-April To1962-March Part-1.pdf", year: "1961-62", caption: "किर्लोस्कर", kind: "photo", contains_face: true, ...over,
@@ -54,4 +54,22 @@ test("the alternative text is the caption, or says where the photograph is from"
 test("the line under a photograph says its page and issue", () => {
   assert.equal(photoSourceLabel(cleanPhotos([photo()])[0]), "Page 214 · Sampada 1961-62");
   assert.equal(photoSourceLabel(cleanPhotos([photo({ year: null })])[0]), "Page 214");
+});
+
+test("the photographs are the answer when the text search found nothing but photographs were found", () => {
+  const photos = cleanPhotos([photo()]);
+  assert.equal(photosAreTheAnswer({ found: false, photos }), true);
+  assert.equal(PHOTOS_FOUND_TEXT, "Photos found in Sampada archive:");
+});
+
+test("they are not the answer when the text answer was found, or there are no photographs", () => {
+  const photos = cleanPhotos([photo()]);
+  assert.equal(photosAreTheAnswer({ found: true, photos }), false); // a real answer, with photographs beside it
+  assert.equal(photosAreTheAnswer({ found: false, photos: [] }), false); // an ordinary "not found"
+  assert.equal(photosAreTheAnswer({ found: false }), false);
+  assert.equal(photosAreTheAnswer({ photos }), false); // an old chat that never recorded "found"
+});
+
+test("a question back stays a question, even with photographs", () => {
+  assert.equal(photosAreTheAnswer({ found: false, clarify: true, photos: cleanPhotos([photo()]) }), false);
 });

@@ -32,6 +32,18 @@ export function cleanPhotos(value: unknown): Photo[] {
   return photos;
 }
 
+/** What the answer says when the photographs are all there is to show (see photosAreTheAnswer). */
+export const PHOTOS_FOUND_TEXT = "Photos found in Sampada archive:";
+
+/**
+ * True when the text search found nothing but photographs were found: then the photographs ARE the answer, and the chat says
+ * so instead of "No results found" and the archive's "not found" sentence, which would contradict the pictures right under them.
+ * A question back (clarify) is still a question, and a reply with no photographs is still a "not found".
+ */
+export function photosAreTheAnswer(message: { found?: boolean; clarify?: boolean; photos?: readonly unknown[] }): boolean {
+  return message.found === false && message.clarify !== true && (message.photos?.length ?? 0) > 0;
+}
+
 /** The picture of a photograph. It goes through this app's own route (which asks the backend), so it never needs a link that expires and a saved chat keeps its pictures. */
 export const photoImageUrl = (id: number): string => `/api/photos/${id}`;
 
