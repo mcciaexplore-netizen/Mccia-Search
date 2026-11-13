@@ -1,0 +1,21 @@
+{
+  "pages": 197,
+  "pages_with_photos": 84,
+  "photos": 130,
+  "kinds": {
+    "advertisement": 74,
+    "photo": 26,
+    "illustration": 30
+  },
+  "with_faces": 41,
+  "with_caption": 79,
+  "seconds_per_page": 38.98,
+  "sheets": [
+    "sheet_01.jpg",
+    "sheet_02.jpg",
+    "sheet_03.jpg",
+    "sheet_04.jpg",
+    "sheet_05.jpg",
+    "sheet_06.jpg"
+  ]
+}
