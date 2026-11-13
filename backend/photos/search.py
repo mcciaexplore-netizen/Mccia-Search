@@ -13,6 +13,7 @@ from typing import Callable
 from pgvector import Vector
 
 from db.connection import get_pooled_connection
+from photos.devanagari import CONSONANTS, matches as skeleton_matches, significant_skeletons, skeleton
 from photos.query import photo_subject, spellings as default_spellings
 from retrieval.search import keyword_terms, search as text_search, volume_label, year_scope
 
@@ -55,10 +56,13 @@ def caption_score(caption: str, terms: list[str], names: tuple[str, ...]) -> flo
     usable = [t for t in terms if len(t) >= MIN_TERM_CHARS]
     literal = sum(1 for t in usable if t.lower() in low) / len(terms) if usable else 0.0
     spelt = 0.0
+    caption_skeleton = skeleton(caption)
     for name in names:
         words = name.split()
         if words and len(name) >= MIN_TERM_CHARS and name.lower() in low:
             spelt = max(spelt, min(1.0, len(words) / len(terms)))
+        if caption_skeleton:  # the same name spelt differently (पार्खे / पारखे, or an OCR slip in the caption): compare consonants only
+            spelt = max(spelt, min(1.0, skeleton_matches(name, caption_skeleton) / len(terms)))
     return clamp01(max(literal, spelt))
 
 
@@ -114,6 +118,8 @@ def search_photos(
     scoped = "AND p.document_id = ANY(%(docs)s)" if scope.document_ids is not None else ""
     base = {"docs": list(scope.document_ids) if scope.document_ids is not None else None}
     patterns = sorted({like_pattern(t) for t in (*terms, *spelt.names) if len(t) >= MIN_TERM_CHARS})
+    # The same, as consonant skeletons, for names spelt differently in the caption (the database compares a caption's consonants with them).
+    skeleton_patterns = sorted({f"%{k}%" for name in spelt.names for k in significant_skeletons(name)})
 
     page_raw: dict[tuple[int, int], float] = {}
     try:
@@ -140,9 +146,10 @@ def search_photos(
     sim_sql = "1 - (p.clip_embedding <=> %(vec)s::vector)" if vector else "NULL"
     with get_pooled_connection() as conn:
         params = {**base, "vec": vector}
-        if patterns:  # by caption
+        if patterns or skeleton_patterns:  # by caption: its words as typed, or its consonants
             add(_rows(conn, f"SELECT {_COLUMNS}, {sim_sql} FROM photo_index p JOIN documents d ON d.id = p.document_id "
-                            f"WHERE p.description ILIKE ANY(%(patterns)s) {scoped} LIMIT 200", {**params, "patterns": patterns}))
+                            f"WHERE (p.description ILIKE ANY(%(patterns)s) OR regexp_replace(p.description, %(not_consonant)s, '', 'g') LIKE ANY(%(skeletons)s)) "
+                            f"{scoped} LIMIT 200", {**params, "patterns": patterns, "skeletons": skeleton_patterns, "not_consonant": f"[^{CONSONANTS}]"}))
         if page_raw:  # by page
             pairs = sorted(page_raw)
             add(_rows(conn, f"SELECT {_COLUMNS}, {sim_sql} FROM photo_index p JOIN documents d ON d.id = p.document_id "

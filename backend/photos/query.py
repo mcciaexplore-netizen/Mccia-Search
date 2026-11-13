@@ -55,8 +55,9 @@ class Spellings:
 
 SPELLING_PROMPT = (
     "You help search a Marathi and English magazine archive for photographs. The user asked for photographs of the subject below. Reply with JSON only: "
-    '{"english": "<the subject as a short English phrase, for an image-search model>", '
-    '"spellings": ["<up to 6 ways the names and key words may be printed in a caption: Marathi (Devanagari) spellings first, then English>"]}. '
+    '{"english": "<the subject in English for an image-search model: a faithful short phrase that uses only the subject\'s own words (a name stays a name); '
+    'add nothing that is not in the subject>", '
+    '"spellings": ["<up to 6 ways the names and key words may be printed in a caption: the common Marathi (Devanagari) spellings first, then English>"]}. '
     "Keep person and company names as names (do not translate them). No commentary."
 )
 

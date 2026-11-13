@@ -482,3 +482,58 @@ def test_a_slow_photo_search_is_given_up_on_so_the_answer_is_not_held_back(clien
     started = time.monotonic()
     response = client.post("/chat", json={"query": "show photo of Kirloskar"}, headers=HEADERS)
     assert response.status_code == 200 and response.json()["photos"] == [] and time.monotonic() - started < 1.5
+
+
+# ---- names spelt differently in the caption (consonant skeletons) ------------------------------------------------------------------------------
+
+from photos.devanagari import matches, significant_skeletons, skeleton
+
+
+@pytest.mark.parametrize("a, b", [("पारखे", "पार्खे"), ("किर्लोस्कर", "किर्लास्कर"), ("किर्लोस्कर", "किर्लोस्कर‍"), ("सोवनी", "सोवनी")])
+def test_names_that_differ_only_in_vowel_signs_and_joiners_have_the_same_skeleton(a, b):
+    assert skeleton(a) == skeleton(b) and len(skeleton(a)) >= 3
+
+
+def test_a_skeleton_keeps_only_devanagari_consonants():
+    assert skeleton("Parkhe") == "" and skeleton("१९६५") == "" and skeleton("") == "" and skeleton(None) == ""
+    assert skeleton("पारखे, श्री.") == skeleton("परख श्र")
+
+
+def test_words_with_fewer_than_three_consonants_are_not_used():
+    assert significant_skeletons("चा श्री किर्लोस्कर") == ["करलसकर"]  # चा (1 consonant) and श्री (2) are left out
+    assert matches("चा", skeleton("चा चा")) == 0
+
+
+def test_a_spelling_with_several_words_must_match_all_its_long_words():
+    caption = skeleton("उद्योग प्रदर्शन")
+    assert matches("पार्खे उद्योग समूह", caption) == 0  # one common word is not enough
+    assert matches("उद्योग प्रदर्शन", caption) == 2
+
+
+def test_a_name_spelt_one_way_finds_the_caption_that_spells_it_another():
+    caption = "श्री.म.स. पारखे, श्री. शे. वा. किर्लोस्कर, ना, जी."
+    assert S.caption_score(caption, ["parkhe"], ("पार्खे", "Parkhe")) == 1.0  # Gemini spelt it पार्खे, the magazine printed पारखे
+    assert S.caption_score("चहापान-समारंभार्चे एक दृश्य", ["parkhe"], ("पार्खे", "Parkhe")) == 0.0
+    assert S.caption_score("श्री. किर्लास्कर", ["kirloskar"], ("किर्लोस्कर",)) == 1.0  # an OCR slip in the caption
+    assert S.caption_score("उद्योग प्रदर्शन", ["parkhe"], ("पार्खे उद्योग समूह",)) == 0.0
+
+
+def test_a_latin_only_caption_and_latin_spellings_are_unaffected():
+    assert S.caption_score("Pune Expo 2010 opening", ["pune", "expo", "2010"], ("Pune Expo",)) == 1.0
+    assert S.caption_score("Dr. Rao", ["rao"], ("Rao",)) == 1.0
+
+
+@needs_scratch
+def test_the_caption_lookup_in_the_database_finds_a_differently_spelt_name(db):
+    doc = add_doc(db, "1947 April.PDF")
+    parkhe = add_photo(db, doc, 158, caption="श्री.म.स. पारखे, श्री. शे. वा. किर्लोस्कर", axis=70)
+    add_photo(db, doc, 13, caption="चहापान-समारंभार्चे एक दृश्य", axis=71)
+    hits = S.search_photos("show photo of Parkhe", 5, spellings=names("पार्खे", "Parkhe"), pages_for=no_pages)  # the spelling does not occur in the caption
+    assert [h.id for h in hits] == [parkhe] and hits[0].signals["caption"] == 1.0
+
+
+@needs_scratch
+def test_the_skeleton_lookup_is_literal_about_the_database_regex(db):
+    doc = add_doc(db, "1947 April.PDF")
+    add_photo(db, doc, 5, caption="Latin caption only", axis=72)
+    assert S.search_photos("photo of Parkhe", 5, spellings=names("पार्खे"), pages_for=no_pages) == []  # a caption with no Devanagari has no skeleton and matches nothing
