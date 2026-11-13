@@ -471,3 +471,30 @@ def test_an_unknown_pdf_is_a_clear_error(tmp_path, monkeypatch):
         resolve_pdf("nothing.pdf", tmp_path)
     with pytest.raises(FileNotFoundError, match="--cache"):
         resolve_pdf("nothing.pdf", None)
+
+
+def test_the_bucket_is_created_private_and_images_only():
+    import json
+
+    seen = {}
+
+    def handler(request):
+        seen.update(url=str(request.url), body=json.loads(request.content))
+        return httpx.Response(200, json={"name": "sampada-images"})
+
+    assert fake_supabase(handler).ensure_bucket() is True
+    assert seen["url"] == "https://abc.supabase.co/storage/v1/bucket"
+    assert seen["body"] == {"id": "sampada-images", "name": "sampada-images", "public": False, "file_size_limit": 10485760, "allowed_mime_types": ["image/jpeg"]}
+
+
+@pytest.mark.parametrize("status", [400, 409])
+def test_a_bucket_that_already_exists_is_fine(status):
+    store = fake_supabase(lambda request: httpx.Response(status, json={"statusCode": "409", "error": "Duplicate", "message": "The resource already exists"}))
+    assert store.ensure_bucket() is False
+
+
+def test_any_other_bucket_error_is_an_error_without_the_key():
+    store = fake_supabase(lambda request: httpx.Response(401, text=f"bad key {SECRET}"))
+    with pytest.raises(StorageError) as error:
+        store.ensure_bucket()
+    assert "401" in str(error.value) and SECRET not in str(error.value)

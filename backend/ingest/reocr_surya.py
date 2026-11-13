@@ -122,7 +122,7 @@ def select_documents(start_year: int, end_year: int) -> list[dict]:
 
 
 @contextmanager
-def claim(document_id: int):
+def claim(document_id: int, lock_class: int = LOCK_CLASS):
     """Take the database lock on one document: yields True if this run now owns it, False if another run does.
 
     A session lock on a connection of its own, held while the document is read and released when the block ends, or by the database if
@@ -131,7 +131,7 @@ def claim(document_id: int):
     """
     with get_connection() as conn:
         conn.autocommit = True
-        got = conn.execute("SELECT pg_try_advisory_lock(%s, %s)", (LOCK_CLASS, document_id)).fetchone()[0]
+        got = conn.execute("SELECT pg_try_advisory_lock(%s, %s)", (lock_class, document_id)).fetchone()[0]
         stop = threading.Event()
         beat = None
         if got:
@@ -152,7 +152,7 @@ def claim(document_id: int):
                 beat.join(timeout=5)
             if got:
                 try:
-                    conn.execute("SELECT pg_advisory_unlock(%s, %s)", (LOCK_CLASS, document_id))
+                    conn.execute("SELECT pg_advisory_unlock(%s, %s)", (lock_class, document_id))
                 except Exception:
                     pass  # closing the connection releases it anyway
 

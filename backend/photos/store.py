@@ -63,6 +63,18 @@ class SupabaseStore:
             raise StorageError(f"{what} failed: HTTP {response.status_code} {body}")
         return response
 
+    def ensure_bucket(self, max_bytes: int = 10 * 1024 * 1024) -> bool:
+        """Create the private bucket if it does not exist (images only, no larger than max_bytes). Returns True if it was created, False if it was there."""
+        response = self._client.post(
+            f"{self.base}/bucket",
+            json={"id": self.bucket, "name": self.bucket, "public": False, "file_size_limit": max_bytes, "allowed_mime_types": ["image/jpeg"]},
+            headers=self._headers(),
+        )
+        if response.status_code in (400, 409) and "already exists" in response.text.lower():
+            return False
+        self._check(response, f"creating the bucket {self.bucket}")
+        return True
+
     def put(self, path: str, data: bytes, content_type: str = "image/jpeg") -> None:
         """Upload (or replace: x-upsert) one object."""
         url = f"{self.base}/object/{self.bucket}/{quote(path)}"
@@ -79,11 +91,6 @@ class SupabaseStore:
             if item.get("signedURL") and item.get("path"):
                 urls[item["path"]] = self.base + item["signedURL"]
         return urls
-
-
-def ensure_bucket(conn) -> None:
-    """Create the private bucket if it is not there (Supabase keeps buckets in storage.buckets, which the database owner may write). Needs no API key."""
-    conn.execute("INSERT INTO storage.buckets (id, name, public) VALUES (%s, %s, FALSE) ON CONFLICT (id) DO NOTHING", (BUCKET, BUCKET))
 
 
 def project_url_from(database_url: str | None) -> str | None:
