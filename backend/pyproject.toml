@@ -8,7 +8,7 @@ dependencies = [
     "uvicorn",
     "python-multipart",
     "python-dotenv",
-    "google-genai>=1.0",
+    "google-genai>=1.0,<3",  # 2.x is what runs in production and what the tests ran on; 3.x (released since) is untested and installs differently
     "google-api-python-client>=2.140",
     "google-auth>=2.34",
     "psycopg[binary]>=3.2",
@@ -20,6 +20,11 @@ dependencies = [
     "pytesseract>=0.3.13",
     "pypdf>=6.21.0",
     "pypdfium2>=5.10",
+    # Imported directly by the code, so declared here instead of arriving as a side-effect of other packages: google-genai 3.x stopped installing httpx,
+    # and a fresh build of the image on 13 Nov 2026 then failed to import it.
+    "httpx>=0.27",
+    "numpy>=1.26",
+    "pillow>=10",
 ]
 
 [project.optional-dependencies]
@@ -38,4 +43,6 @@ surya = [
 ]
 photos = [
     "opencv-python-headless>=4.8",
+    "transformers>=5.12",
+    "huggingface-hub>=1.5",
 ]

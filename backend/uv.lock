@@ -1596,7 +1596,10 @@ dependencies = [
     { name = "google-api-python-client" },
     { name = "google-auth" },
     { name = "google-genai" },
+    { name = "httpx" },
+    { name = "numpy" },
     { name = "pgvector" },
+    { name = "pillow" },
     { name = "psycopg", extra = ["binary"] },
     { name = "psycopg-pool" },
     { name = "pydantic" },
@@ -1622,7 +1625,9 @@ paddle = [
     { name = "paddlepaddle" },
 ]
 photos = [
+    { name = "huggingface-hub" },
     { name = "opencv-python-headless" },
+    { name = "transformers" },
 ]
 surya = [
     { name = "surya-ocr" },
@@ -1634,11 +1639,15 @@ requires-dist = [
     { name = "fastapi" },
     { name = "google-api-python-client", specifier = ">=2.140" },
     { name = "google-auth", specifier = ">=2.34" },
-    { name = "google-genai", specifier = ">=1.0" },
+    { name = "google-genai", specifier = ">=1.0,<3" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "huggingface-hub", marker = "extra == 'photos'", specifier = ">=1.5" },
+    { name = "numpy", specifier = ">=1.26" },
     { name = "opencv-python-headless", marker = "extra == 'photos'", specifier = ">=4.8" },
     { name = "paddleocr", marker = "extra == 'paddle'", specifier = ">=3.7.0" },
     { name = "paddlepaddle", marker = "extra == 'paddle'", specifier = ">=3.3.1" },
     { name = "pgvector", specifier = ">=0.4" },
+    { name = "pillow", specifier = ">=10" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "psycopg-pool", specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2.8" },
@@ -1651,6 +1660,7 @@ requires-dist = [
     { name = "python-multipart" },
     { name = "sentence-transformers", marker = "extra == 'local-embeddings'", specifier = ">=6.1.0" },
     { name = "surya-ocr", marker = "extra == 'surya'", specifier = ">=0.23.0" },
+    { name = "transformers", marker = "extra == 'photos'", specifier = ">=5.12" },
     { name = "uvicorn" },
 ]
 provides-extras = ["easyocr", "paddle", "local-embeddings", "surya", "photos"]
