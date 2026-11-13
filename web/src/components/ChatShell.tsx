@@ -210,8 +210,8 @@ export default function ChatShell({ user = null, hubUrl = null }: ChatShellProps
             </a>
           )}
           <div className="flex items-center gap-2">
-            <div className="min-w-0 flex-1 rounded-xl bg-white px-3.5 py-2.5 shadow-sm ring-1 ring-black/5">
-              <Logo width={160} />
+            <div className="min-w-0 flex-1 px-0.5 py-1">
+              <Logo width={112} />
             </div>
             {/* Wide windows collapse the sidebar; narrow ones close the drawer. */}
             <button
